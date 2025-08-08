@@ -36,10 +36,8 @@ class ChineseString:
 
     @property
     def unique_id(self) -> str:
-        """获取唯一标识符：module_name + resource_name，如果resource_name为空则使用文件路径和行号"""
-        if self.resource_name:
-            return f"{self.module_name}:{self.resource_name}"
-        return f"{self.file_path}:{self.line_number}"
+        """获取唯一标识符：module_name:原始内容"""
+        return f"{self.module_name}:{self.text}"
 
 class ChineseStringExtractor:
     """中文字符串提取器"""
@@ -183,12 +181,12 @@ class ChineseStringExtractor:
             strings = self.extract_strings_from_file(kt_file)
             all_strings.extend(strings)
         
-        # 去重（基于文本和文件路径）
+        # 去重（基于unique_id，即模块名和文本内容）
         unique_strings = {}
         for s in all_strings:
-            key = f"{s.text}:{s.file_path}"
-            if key not in unique_strings:
-                unique_strings[key] = s
+            unique_id = s.unique_id
+            if unique_id not in unique_strings:
+                unique_strings[unique_id] = s
         
         return list(unique_strings.values())
 

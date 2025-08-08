@@ -109,24 +109,21 @@ def translate_strings():
         # 批量翻译
         results = translation_service.translate_batch(selected_strings)
         
-        # 更新字符串信息
-        result_dict = {}
-        for i, id in enumerate(selected_ids):
+        # 更新字符串信息，按index直接匹配
+        selected_strings_dict = {s.unique_id: s for s in selected_strings}
+        
+        for i, unique_id in enumerate(selected_ids):
             if i >= len(results):
                 print(f"翻译结果数量不足，selected_ids size: {len(selected_ids)}, results size: {len(results)}")
                 break
-            trans = results[i]
-            if (idx := id.find(":")) > 0:
-                unique_id = id[:idx] + ":" + trans.get("name")
-                result_dict[unique_id] = trans
+            
+            if unique_id in selected_strings_dict:
+                trans = results[i]
+                string_obj = selected_strings_dict[unique_id]
+                string_obj.translation = trans.get('translation', '')
+                string_obj.resource_name = trans.get('name', '') or trans.get('resource_name', '')
         
-        print("result_dict: ", result_dict)
-
-        for s in current_strings:
-            if s.unique_id in result_dict:
-                result = result_dict[s.unique_id]
-                s.translation = result.get('translation', '')
-                s.resource_name = result.get('resource_name', '')
+        print(f"翻译完成，更新了 {min(len(selected_ids), len(results))} 个字符串")
         
         return jsonify({
             'success': True,
