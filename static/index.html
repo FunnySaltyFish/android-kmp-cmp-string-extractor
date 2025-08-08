@@ -474,6 +474,45 @@
                         </div>
                         
                         <div class="form-group">
+                            <label for="sourceXmlPath">源XML文件路径模板：</label>
+                            <input 
+                                type="text" 
+                                id="sourceXmlPath" 
+                                v-model="config.sourceXmlPath" 
+                                placeholder="例如: {module_name}/src/commonMain/libres/strings/strings_zh.xml"
+                            >
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                使用 {module_name} 作为占位符，系统会自动替换为实际的模块名
+                            </small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="targetLanguage">目标语言代码：</label>
+                            <input 
+                                type="text" 
+                                id="targetLanguage" 
+                                v-model="config.targetLanguage" 
+                                placeholder="例如: en"
+                            >
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                目标翻译语言的代码，如 en（英文）、ja（日文）、ko（韩文）等
+                            </small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="targetXmlPath">目标XML文件路径模板：</label>
+                            <input 
+                                type="text" 
+                                id="targetXmlPath" 
+                                v-model="config.targetXmlPath" 
+                                placeholder="例如: {module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml"
+                            >
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                使用 {module_name} 和 {target_lang} 作为占位符
+                            </small>
+                        </div>
+
+                         <div class="form-group">
                             <label for="customPrompt">翻译提示词：</label>
                             <textarea 
                                 id="customPrompt" 
@@ -485,6 +524,21 @@
                         
                         <div class="form-group">
                             <label for="referenceTranslations">参考翻译（可选）：</label>
+                            <div style="margin-bottom: 10px;">
+                                <button 
+                                    type="button" 
+                                    class="btn btn-secondary" 
+                                    @click="autoExtractReferences" 
+                                    :disabled="loading || !config.projectPath.trim()"
+                                    style="font-size: 12px; padding: 8px 12px;"
+                                >
+                                    <span v-if="extractingReferences">提取中...</span>
+                                    <span v-else>🔄 自动提取参考翻译</span>
+                                </button>
+                                <small style="color: #666; margin-left: 10px;">
+                                    从现有的XML文件中提取10条翻译对照
+                                </small>
+                            </div>
                             <textarea 
                                 id="referenceTranslations" 
                                 v-model="config.referenceTranslations" 
@@ -678,11 +732,15 @@
                         modelName: 'gpt-4o-mini',
                         batchSize: 50,
                         customPrompt: DEFTAULT_PROMPT,
-                        referenceTranslations: ''
+                        referenceTranslations: '',
+                        sourceXmlPath: '{module_name}/src/commonMain/libres/strings/strings_zh.xml',
+                        targetLanguage: 'en',
+                        targetXmlPath: '{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml'
                     },
                     strings: [],
                     selectedCount: 0,
                     translatedCount: 0,
+                    extractingReferences: false, // 自动提取参考翻译状态
                     // 拖拽选择相关
                     isDragSelecting: false,
                     dragStartIndex: -1,
@@ -1088,7 +1146,10 @@
                                 batchSize: config.batchSize || this.config.batchSize,
                                 customPrompt: config.customPrompt || this.config.customPrompt,
                                 referenceTranslations: config.referenceTranslations || this.config.referenceTranslations,
-                                apiKey: config.apiKey || this.config.apiKey
+                                apiKey: config.apiKey || this.config.apiKey,
+                                sourceXmlPath: config.sourceXmlPath || this.config.sourceXmlPath,
+                                targetLanguage: config.targetLanguage || this.config.targetLanguage,
+                                targetXmlPath: config.targetXmlPath || this.config.targetXmlPath
                             };
                         }
 
@@ -1209,6 +1270,57 @@
                 extractModuleName(filePath) {
                     const parts = filePath.split('/');
                     return parts[0] || 'common';
+                },
+
+                // 自动提取参考翻译
+                async autoExtractReferences() {
+                    if (!this.config.projectPath.trim()) {
+                        this.error = '请先设置项目路径';
+                        return;
+                    }
+
+                    this.extractingReferences = true;
+                    this.error = '';
+
+                    try {
+                        const response = await axios.post('/api/extract_references', {
+                            project_path: this.config.projectPath,
+                            source_xml_path: this.config.sourceXmlPath,
+                            target_language: this.config.targetLanguage,
+                            target_xml_path: this.config.targetXmlPath,
+                            limit: 10
+                        });
+
+                        if (response.data.success) {
+                            const references = response.data.references;
+                            if (references && references.length > 0) {
+                                // 将提取的翻译对照格式化为文本
+                                const formattedReferences = references.map(ref => 
+                                    `${ref.source} -> ${ref.target}`
+                                ).join('\n');
+                                
+                                // 如果已有参考翻译，则追加，否则直接设置
+                                if (this.config.referenceTranslations.trim()) {
+                                    this.config.referenceTranslations += '\n' + formattedReferences;
+                                } else {
+                                    this.config.referenceTranslations = formattedReferences;
+                                }
+                                
+                                this.successMessage = `成功提取了 ${references.length} 条参考翻译`;
+                                setTimeout(() => {
+                                    this.successMessage = '';
+                                }, 3000);
+                            } else {
+                                this.error = '未找到可用的翻译对照，请检查XML文件路径配置';
+                            }
+                        } else {
+                            this.error = response.data.error || '提取参考翻译失败';
+                        }
+                    } catch (err) {
+                        this.error = err.response?.data?.error || '提取参考翻译请求失败';
+                    } finally {
+                        this.extractingReferences = false;
+                    }
                 }
             }
         }).mount('#app');

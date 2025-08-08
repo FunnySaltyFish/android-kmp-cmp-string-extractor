@@ -137,6 +137,40 @@ def translate_strings():
     except Exception as e:
         return jsonify({'error': f'翻译失败: {str(e)}'}), 500
 
+@app.route('/api/extract_references', methods=['POST'])
+def extract_references():
+    """提取参考翻译API"""
+    global extractor
+    
+    data = request.json
+    project_path = data.get('project_path', '')
+    source_xml_path = data.get('source_xml_path', '{module_name}/src/commonMain/libres/strings/strings_zh.xml')
+    target_language = data.get('target_language', 'en')
+    target_xml_path = data.get('target_xml_path', '{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml')
+    limit = data.get('limit', 10)
+    
+    if not project_path:
+        return jsonify({'error': '请提供项目路径'}), 400
+    
+    try:
+        # 初始化extractor（如果还没有）
+        if not extractor:
+            extractor = ChineseStringExtractor(project_path)
+        
+        # 提取参考翻译
+        references = extractor.extract_reference_translations(
+            source_xml_path, target_language, target_xml_path, limit
+        )
+        
+        return jsonify({
+            'success': True,
+            'references': references,
+            'count': len(references)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'提取参考翻译失败: {str(e)}'}), 500
+
 @app.route('/api/save', methods=['POST'])
 def save_changes():
     """保存更改API"""

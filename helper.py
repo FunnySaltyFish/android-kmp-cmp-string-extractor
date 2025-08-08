@@ -208,6 +208,73 @@ class ChineseStringExtractor:
             name = f"text_{abs(hash(text)) % 100000:05d}"
         return name
 
+    def extract_reference_translations(
+        self, 
+        source_xml_path: str, 
+        target_language: str, 
+        target_xml_path: str, 
+        limit: int = 10
+    ) -> List[Dict[str, str]]:
+        """从现有的XML文件中提取参考翻译对照
+        
+        Args:
+            source_xml_path: 源XML文件路径模板，如 "{module_name}/src/commonMain/libres/strings/strings_zh.xml"
+            target_language: 目标语言代码，如 "en"
+            target_xml_path: 目标XML文件路径模板，如 "{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml"
+            limit: 最大提取数量
+            
+        Returns:
+            List[Dict[str, str]]: 翻译对照列表，每个元素包含 source, target 字段
+        """
+        references = []
+        
+        try:
+            # 扫描所有模块
+            for module_dir in self.project_root.iterdir():
+                if not module_dir.is_dir() or module_dir.name.startswith('.'):
+                    continue
+                
+                # 构建实际的XML文件路径
+                source_path = self.project_root / source_xml_path.format(module_name=module_dir.name)
+                target_path = self.project_root / target_xml_path.format(
+                    module_name=module_dir.name, 
+                    target_lang=target_language
+                )
+                
+                # 检查文件是否存在
+                if not source_path.exists() or not target_path.exists():
+                    continue
+                
+                # 解析XML文件
+                source_strings = _parse_strings_xml(source_path)
+                target_strings = _parse_strings_xml(target_path)
+                
+                # 提取对照翻译
+                for name, source_text in source_strings.items():
+                    if name in target_strings and self.contains_chinese(source_text):
+                        target_text = target_strings[name]
+                        # 跳过空的或者只有空白字符的翻译
+                        if target_text.strip():
+                            references.append({
+                                'source': source_text,
+                                'target': target_text,
+                                'resource_name': name,
+                                'module': module_dir.name
+                            })
+                            
+                            # 达到限制数量时停止
+                            if len(references) >= limit:
+                                break
+                
+                # 达到限制数量时停止扫描其他模块
+                if len(references) >= limit:
+                    break
+                    
+        except Exception as e:
+            print(f"提取参考翻译时出错: {e}")
+        
+        return references
+
 
 class TranslationService:
     """翻译服务"""
@@ -231,11 +298,7 @@ class TranslationService:
         # 构建翻译请求
         texts_to_translate = [s.text for s in strings]
     
-        
-        prompt = """
-
-"""
-        prompt = prompt.format(
+        prompt = self.custom_prompt.format(
             target_language=self.target_language,
             reference_translations=self.reference_translations,
             source_strings=json.dumps(texts_to_translate, ensure_ascii=False),
@@ -359,3 +422,20 @@ class StringReplacer:
         except Exception as e:
             print(f"生成XML文件失败: {e}")
             return False
+
+def _parse_strings_xml(xml_path: Path) -> dict[str, str]:
+    """解析 strings_*.xml，返回 name->text 映射。不存在返回空。"""
+    try:
+        if not xml_path.exists():
+            return {}
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        result = {}
+        for string_elem in root.findall("string"):
+            name = string_elem.get("name")
+            text = string_elem.text or ""
+            if name:
+                result[name] = text
+        return result
+    except Exception:
+        return {}
