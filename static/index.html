@@ -1098,8 +1098,8 @@
                             const meta = JSON.parse(metaData);
                             const age = Date.now() - meta.timestamp;
                             
-                            // 如果数据不超过24小时，则恢复
-                            if (age < 24 * 60 * 60 * 1000) {
+                            // 如果数据不超过10天，则恢复
+                            if (age < 10 * 24 * 60 * 60 * 1000) {
                                 let allStrings = [];
                                 
                                 // 加载所有批次
