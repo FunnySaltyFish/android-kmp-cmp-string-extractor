@@ -1,0 +1,38 @@
+{
+  "project_path": "D:/projects/kotlin/Transtation",
+  "api_settings": {
+    "api_key": "",
+    "base_url": "",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3
+  },
+  "extraction_settings": {
+    "exclude_patterns": [
+      "//.*",
+      "/\\*.*?\\*/",
+      "Log\\.[dwiev]\\("
+    ],
+    "include_file_patterns": [
+      "**/*.kt"
+    ],
+    "exclude_directories": [
+      "build",
+      ".gradle",
+      ".git"
+    ]
+  },
+  "translation_settings": {
+    "special_terms": {
+      "译站": "Transtation",
+      "登录": "Login",
+      "注册": "Register"
+    },
+    "naming_convention": "snake_case",
+    "max_batch_size": 20
+  },
+  "output_settings": {
+    "strings_directory": "src/commonMain/libres/strings",
+    "backup_original": true,
+    "generate_both_languages": true
+  }
+}
