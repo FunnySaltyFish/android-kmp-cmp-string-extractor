@@ -486,6 +486,112 @@
             font-style: italic;
         }
 
+        /* 进度条样式 */
+        .progress-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 15px 50px rgba(0,0,0,0.3);
+            z-index: 10000;
+            padding: 30px;
+            min-width: 400px;
+            max-width: 500px;
+        }
+
+        .progress-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.6);
+            z-index: 9999;
+        }
+
+        .progress-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .progress-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .progress-subtitle {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .progress-details {
+            background: #f8f9fa;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+
+        .progress-details .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .progress-details .detail-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .progress-stop-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 15px;
+            width: 100%;
+            font-size: 14px;
+        }
+
+        .progress-stop-btn:hover {
+            background: #c82333;
+        }
+
+        .progress-stop-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
         @media (max-width: 768px) {
             .translation-row {
                 grid-template-columns: 1fr;
@@ -772,19 +878,19 @@
                 </div>
 
                 <h3 style="margin-bottom: 20px; color: #333; font-size: 1.2em; display: flex; align-items: center;">
-                    ● 待处理字符串 ({{ untranslatedStrings.length }}），已选择 {{ selectedCount }}
+                    ● 待处理字符串 ({{ untranslatedStrings.length }}），已选择 {{ selectedUntranslatedCount }}
                 </h3>
 
                  <!-- 控制按钮 -->
                  <div>
                     <button class="btn" @click="selectAll">📋 全选</button>
                     <button class="btn btn-secondary" @click="selectNone">❌ 取消全选</button>
-                    <button class="btn btn-secondary" @click="ignoreSelected" :disabled="loading || selectedCount === 0">
-                        🚫 忽略选中项 ({{ selectedCount }})
+                    <button class="btn btn-secondary" @click="ignoreSelected" :disabled="loading || selectedUntranslatedCount === 0">
+                        🚫 忽略选中项 ({{ selectedUntranslatedCount }})
                     </button>
-                    <button class="btn" @click="translateSelected" :disabled="loading || selectedCount === 0">
+                    <button class="btn" @click="translateSelected" :disabled="loading || selectedUntranslatedCount === 0">
                         <span v-if="loading">翻译中...</span>
-                        <span v-else>🌐 翻译选中项 ({{ selectedCount }})</span>
+                        <span v-else>🌐 翻译选中项 ({{ selectedUntranslatedCount }})</span>
                     </button>
                 </div>
 
@@ -841,6 +947,51 @@
                 <div class="spinner"></div>
                 <div>正在处理中，请稍候...</div>
             </div>
+        </div>
+
+        <!-- 批量翻译进度条 -->
+        <div v-if="batchTranslation.isRunning" class="progress-overlay" @click.self=""></div>
+        <div v-if="batchTranslation.isRunning" class="progress-container">
+            <div class="progress-header">
+                <div class="progress-title">🌐 批量翻译进行中</div>
+                <div class="progress-subtitle">正在翻译第 {{ batchTranslation.currentBatch + 1 }} 批，共 {{ batchTranslation.totalBatches }} 批</div>
+            </div>
+            
+            <div class="progress-text">
+                <span>进度</span>
+                <span>{{ Math.round(batchTranslation.progress) }}%</span>
+            </div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" :style="{ width: batchTranslation.progress + '%' }"></div>
+            </div>
+            
+            <div class="progress-details">
+                <div class="detail-row">
+                    <span>当前批次:</span>
+                    <span>{{ batchTranslation.currentBatch + 1 }} / {{ batchTranslation.totalBatches }}</span>
+                </div>
+                <div class="detail-row">
+                    <span>当前批次大小:</span>
+                    <span>{{ batchTranslation.currentBatchSize }}</span>
+                </div>
+                <div class="detail-row">
+                    <span>已翻译:</span>
+                    <span>{{ batchTranslation.completedCount }} / {{ batchTranslation.totalCount }}</span>
+                </div>
+                <div class="detail-row">
+                    <span>预计剩余时间:</span>
+                    <span>{{ batchTranslation.estimatedTime }}</span>
+                </div>
+            </div>
+            
+            <button 
+                class="progress-stop-btn" 
+                @click="stopBatchTranslation"
+                :disabled="!batchTranslation.canStop"
+            >
+                {{ batchTranslation.stopping ? '正在停止...' : '停止翻译' }}
+            </button>
         </div>
     </div>
 
@@ -899,7 +1050,21 @@
                         SELECTION_STATE: 'transtation_selection',
                         IGNORED_STRINGS: 'transtation_ignored_strings'
                     },
-                    ignoredStrings: new Set() // 被忽略的字符串集合
+                    ignoredStrings: new Set(), // 被忽略的字符串集合
+                    // 批量翻译状态
+                    batchTranslation: {
+                        isRunning: false,
+                        currentBatch: 0,
+                        totalBatches: 0,
+                        currentBatchSize: 0,
+                        totalCount: 0,
+                        completedCount: 0,
+                        progress: 0,
+                        estimatedTime: '计算中...',
+                        canStop: true,
+                        stopping: false,
+                        startTime: null
+                    }
                 }
             },
             computed: {
@@ -916,6 +1081,10 @@
                         !(str.resource_name && str.resource_name.trim() && 
                           str.translation && str.translation.trim())
                     );
+                },
+                // 未翻译字符串中被选中的数量
+                selectedUntranslatedCount() {
+                    return this.untranslatedStrings.filter(str => str.selected).length;
                 }
             },
             mounted() {
@@ -983,7 +1152,8 @@
                         return;
                     }
 
-                    const selectedIds = this.strings
+                    // 只处理未翻译的选中字符串
+                    const selectedIds = this.untranslatedStrings
                         .filter(str => str.selected)
                         .map(str => str.unique_id);
 
@@ -992,63 +1162,143 @@
                         return;
                     }
 
+                    // 启动批量翻译
+                    await this.startBatchTranslation(selectedIds);
+                },
+
+                async startBatchTranslation(selectedIds) {
+                    // 初始化批量翻译状态
+                    const totalBatches = Math.ceil(selectedIds.length / this.config.batchSize);
+                    this.batchTranslation = {
+                        isRunning: true,
+                        currentBatch: 0,
+                        totalBatches: totalBatches,
+                        currentBatchSize: 0,
+                        totalCount: selectedIds.length,
+                        completedCount: 0,
+                        progress: 0,
+                        estimatedTime: '计算中...',
+                        canStop: true,
+                        stopping: false,
+                        startTime: Date.now()
+                    };
+
                     // 保存翻译前的选择状态
                     this.lastSelectedStates.clear();
                     this.strings.forEach(str => {
                         this.lastSelectedStates.set(str.unique_id, str.selected);
                     });
 
-                    this.loading = true;
                     this.error = '';
                     this.successMessage = '';
 
                     try {
-                        const response = await axios.post('/api/translate', {
-                            api_key: this.config.apiKey,
-                            base_url: this.config.baseUrl,
-                            model_name: this.config.modelName,
-                            batch_size: this.config.batchSize,
-                            custom_prompt: this.config.customPrompt,
-                            reference_translations: this.config.referenceTranslations,
-                            selected_ids: selectedIds
-                        });
+                        // 逐批次翻译
+                        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+                            // 检查是否被停止
+                            if (this.batchTranslation.stopping) {
+                                break;
+                            }
 
-                        if (response.data.success) {
-                            // 更新字符串数据，但保持原有的选择状态
-                            const updatedStrings = response.data.strings;
-                            updatedStrings.forEach(updatedStr => {
-                                // 确保设置module_name
-                                if (!updatedStr.module_name) {
-                                    updatedStr.module_name = this.extractModuleName(updatedStr.file_path);
+                            // 更新当前批次信息
+                            this.batchTranslation.currentBatch = batchIndex;
+                            const start = batchIndex * this.config.batchSize;
+                            const end = Math.min(start + this.config.batchSize, selectedIds.length);
+                            const currentBatchIds = selectedIds.slice(start, end);
+                            this.batchTranslation.currentBatchSize = currentBatchIds.length;
+
+                            try {
+                                // 翻译当前批次
+                                const response = await axios.post('/api/translate_batch', {
+                                    api_key: this.config.apiKey,
+                                    base_url: this.config.baseUrl,
+                                    model_name: this.config.modelName,
+                                    batch_size: this.config.batchSize,
+                                    custom_prompt: this.config.customPrompt,
+                                    reference_translations: this.config.referenceTranslations,
+                                    target_language: this.config.targetLanguage,
+                                    selected_ids: currentBatchIds,
+                                    batch_index: batchIndex
+                                });
+
+                                if (response.data.success) {
+                                    // 更新字符串数据
+                                    const updatedStrings = response.data.strings;
+                                    updatedStrings.forEach(updatedStr => {
+                                        if (!updatedStr.module_name) {
+                                            updatedStr.module_name = this.extractModuleName(updatedStr.file_path);
+                                        }
+                                        updatedStr.unique_id = this.generateUniqueId(updatedStr);
+                                        
+                                        const originalSelected = this.lastSelectedStates.get(updatedStr.unique_id);
+                                        if (originalSelected !== undefined) {
+                                            updatedStr.selected = originalSelected;
+                                        }
+                                    });
+                                    
+                                    this.strings = updatedStrings;
+                                    this.batchTranslation.completedCount += response.data.updated_count;
+                                    
+                                    // 检查是否有部分错误
+                                    if (response.data.errors && response.data.errors.length > 0) {
+                                        console.warn(`批次 ${batchIndex + 1} 存在部分错误:`, response.data.errors);
+                                        // 可以选择显示警告，但不停止翻译过程
+                                    }
+                                    
+                                    // 更新进度
+                                    this.updateBatchProgress();
+                                    
+                                    // 自动保存状态
+                                    this.saveCurrentState();
+                                } else {
+                                    throw new Error(response.data.error || `批次 ${batchIndex + 1} 翻译失败`);
                                 }
-                                // 前端维护unique_id
-                                updatedStr.unique_id = this.generateUniqueId(updatedStr);
-                                
-                                const originalSelected = this.lastSelectedStates.get(updatedStr.unique_id);
-                                if (originalSelected !== undefined) {
-                                    updatedStr.selected = originalSelected;
-                                }
-                            });
-                            
-                            this.strings = updatedStrings;
+                            } catch (err) {
+                                // 单个批次失败，停止整个翻译过程
+                                this.error = err.response?.data?.error || err.message || `批次 ${batchIndex + 1} 翻译失败`;
+                                this.restoreSelectionStates();
+                                break;
+                            }
+                        }
+
+                        // 翻译完成
+                        if (!this.batchTranslation.stopping && !this.error) {
                             this.currentStep = 3;
                             this.updateCounts();
-                            this.successMessage = `成功翻译 ${response.data.results.length} 个字符串`;
-                            
-                            // 翻译完成后自动保存状态
-                            this.saveCurrentState();
-                        } else {
-                            this.error = response.data.error || '翻译失败';
-                            // 翻译失败时恢复选择状态
-                            this.restoreSelectionStates();
+                            this.successMessage = `成功翻译 ${this.batchTranslation.completedCount} 个字符串`;
                         }
+
                     } catch (err) {
-                        this.error = err.response?.data?.error || '翻译请求失败';
-                        // 翻译失败时恢复选择状态
+                        this.error = err.message || '批量翻译失败';
                         this.restoreSelectionStates();
                     } finally {
-                        this.loading = false;
+                        this.batchTranslation.isRunning = false;
+                        this.batchTranslation.stopping = false;
                     }
+                },
+
+                updateBatchProgress() {
+                    const progress = (this.batchTranslation.completedCount / this.batchTranslation.totalCount) * 100;
+                    this.batchTranslation.progress = Math.min(progress, 100);
+                    
+                    // 计算预计剩余时间
+                    if (this.batchTranslation.completedCount > 0) {
+                        const elapsed = Date.now() - this.batchTranslation.startTime;
+                        const avgTimePerItem = elapsed / this.batchTranslation.completedCount;
+                        const remainingItems = this.batchTranslation.totalCount - this.batchTranslation.completedCount;
+                        const estimatedMs = remainingItems * avgTimePerItem;
+                        
+                        if (estimatedMs > 60000) {
+                            this.batchTranslation.estimatedTime = Math.round(estimatedMs / 60000) + ' 分钟';
+                        } else {
+                            this.batchTranslation.estimatedTime = Math.round(estimatedMs / 1000) + ' 秒';
+                        }
+                    }
+                },
+
+                stopBatchTranslation() {
+                    this.batchTranslation.stopping = true;
+                    this.batchTranslation.canStop = false;
                 },
 
                 async saveChanges() {
@@ -1075,55 +1325,47 @@
                 },
 
                 ignoreSelected() {
-                    const selectedStrings = this.strings.filter(str => str.selected);
+                    // 只处理未翻译的选中字符串
+                    const selectedUntranslatedStrings = this.untranslatedStrings.filter(str => str.selected);
 
-                    if (selectedStrings.length === 0) {
+                    if (selectedUntranslatedStrings.length === 0) {
                         this.error = '请至少选择一个字符串进行忽略';
                         return;
                     }
 
                     // 将选中的字符串添加到忽略集合
-                    selectedStrings.forEach(str => {
+                    selectedUntranslatedStrings.forEach(str => {
                         this.ignoredStrings.add(str.text);
                     });
 
-                    // 从列表中移除忽略的字符串
-                    this.strings = this.strings.filter(str => !str.selected);
+                    // 从列表中移除忽略的字符串（基于unique_id匹配）
+                    const ignoredIds = new Set(selectedUntranslatedStrings.map(str => str.unique_id));
+                    this.strings = this.strings.filter(str => !ignoredIds.has(str.unique_id));
                     this.updateCounts();
                     
                     // 保存忽略的字符串到localStorage
                     this.saveIgnoredStrings();
                     
-                    this.successMessage = `已忽略 ${selectedStrings.length} 个字符串`;
+                    this.successMessage = `已忽略 ${selectedUntranslatedStrings.length} 个字符串`;
                     setTimeout(() => {
                         this.successMessage = '';
                     }, 3000);
                 },
 
                 selectAll() {
-                    // 限制最大选择数量
-                    let selectedCount = 0;
-                    this.strings.forEach(str => {
-                        if (selectedCount < this.config.batchSize) {
-                            str.selected = true;
-                            selectedCount++;
-                        } else {
-                            str.selected = false;
-                        }
+                    // 只全选未翻译的字符串
+                    this.untranslatedStrings.forEach(str => {
+                        str.selected = true;
                     });
-                    
-                    if (this.strings.length > this.config.batchSize) {
-                        this.successMessage = `已选择前 ${this.config.batchSize} 个条目（受批次大小限制）`;
-                        setTimeout(() => {
-                            this.successMessage = '';
-                        }, 3000);
-                    }
                     
                     this.updateSelection();
                 },
 
                 selectNone() {
-                    this.strings.forEach(str => str.selected = false);
+                    // 只取消选择未翻译的字符串
+                    this.untranslatedStrings.forEach(str => {
+                        str.selected = false;
+                    });
                     this.updateSelection();
                 },
 
@@ -1151,15 +1393,6 @@
                 toggleStringSelection(str, event) {
                     // 如果点击的是输入框等元素，不处理
                     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
-                        return;
-                    }
-                    
-                    // 检查是否会超出最大翻译条数限制
-                    if (!str.selected && this.selectedCount >= this.config.batchSize) {
-                        this.error = `单次最多只能选择 ${this.config.batchSize} 个条目进行翻译`;
-                        setTimeout(() => {
-                            this.error = '';
-                        }, 3000);
                         return;
                     }
                     

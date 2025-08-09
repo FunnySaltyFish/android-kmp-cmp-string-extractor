@@ -14,7 +14,13 @@ app.secret_key = 'your-secret-key-here'
 extractor = None
 translation_service = None
 current_strings: List[ChineseString] = []
-
+batch_translation_state = {
+    'is_running': False,
+    'current_batch': 0,
+    'total_batches': 0,
+    'failed_batches': []
+}
+ 
 extracted_dir = "static/extracted"
 extracted_file = extracted_dir + "/test.json"
 
@@ -133,6 +139,109 @@ def translate_strings():
         
     except Exception as e:
         return jsonify({'error': f'翻译失败: {str(e)}'}), 500
+
+@app.route('/api/translate_batch', methods=['POST'])
+def translate_batch_api():
+    """批次翻译API - 支持分批处理大量字符串"""
+    global current_strings, translation_service
+    
+    data = request.json
+    api_key = data.get('api_key', '')
+    base_url = data.get('base_url', '')
+    selected_ids: list[str] = data.get('selected_ids', [])
+    batch_index = data.get('batch_index', 0)
+    
+    # 配置参数
+    model_name = data.get('model_name', 'gpt-4o-mini')
+    custom_prompt = data.get('custom_prompt', '')
+    reference_translations = data.get('reference_translations', '')
+    target_language = data.get('target_language', 'en')
+    
+    if not api_key:
+        return jsonify({'error': '请提供API Key'}), 400
+    
+    print(f"开始处理批次 {batch_index + 1}，包含 {len(selected_ids)} 个字符串")
+    
+    try:
+        # 筛选当前批次的字符串
+        selected_strings = [s for s in current_strings if s.unique_id in selected_ids]
+        
+        if not selected_strings:
+            return jsonify({'error': f'批次 {batch_index + 1} 中没有找到要翻译的字符串'}), 400
+        
+        # 初始化或更新翻译服务
+        translation_service = TranslationService(
+            api_key, 
+            base_url, 
+            model_name=model_name,
+            custom_prompt=custom_prompt,
+            batch_size=len(selected_strings),  # 使用实际批次大小
+            reference_translations=reference_translations,
+            target_language=target_language
+        )
+        
+        print(f"翻译服务初始化完成，准备翻译 {len(selected_strings)} 个字符串")
+        
+        # 翻译当前批次
+        results = translation_service.translate_batch(selected_strings)
+        
+        if not results:
+            return jsonify({'error': f'批次 {batch_index + 1} 翻译失败：未获得翻译结果'}), 500
+        
+        print(f"翻译完成，获得 {len(results)} 个翻译结果")
+        
+        # 更新字符串信息
+        selected_strings_dict = {s.unique_id: s for s in selected_strings}
+        updated_count = 0
+        translation_errors = []
+        
+        for i, unique_id in enumerate(selected_ids):
+            if i >= len(results):
+                translation_errors.append(f"结果索引 {i} 超出范围")
+                break
+            
+            if unique_id in selected_strings_dict:
+                trans = results[i]
+                string_obj = selected_strings_dict[unique_id]
+                
+                # 验证翻译结果
+                if isinstance(trans, dict):
+                    translation = trans.get('translation', '').strip()
+                    resource_name = (trans.get('name', '') or trans.get('resource_name', '')).strip()
+                    
+                    if translation and resource_name:
+                        string_obj.translation = translation
+                        string_obj.resource_name = resource_name
+                        updated_count += 1
+                    else:
+                        translation_errors.append(f"字符串 '{string_obj.text}' 翻译结果不完整")
+                else:
+                    translation_errors.append(f"字符串 '{string_obj.text}' 翻译结果格式错误")
+            else:
+                translation_errors.append(f"未找到 unique_id: {unique_id}")
+        
+        print(f"批次 {batch_index + 1} 处理完成，成功更新 {updated_count} 个字符串")
+        
+        if translation_errors:
+            print(f"翻译过程中出现的错误: {translation_errors}")
+        
+        response_data = {
+            'success': True,
+            'batch_index': batch_index,
+            'current_batch_size': len(selected_ids),
+            'updated_count': updated_count,
+            'errors': translation_errors if translation_errors else None,
+            'strings': [asdict(s) for s in current_strings]
+        }
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        error_msg = f'批次 {batch_index + 1} 翻译失败: {str(e)}'
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': error_msg}), 500
 
 @app.route('/api/extract_references', methods=['POST'])
 def extract_references():
