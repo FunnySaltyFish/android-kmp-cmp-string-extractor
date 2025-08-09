@@ -277,36 +277,9 @@
             border: 1px solid #c3e6cb;
         }
 
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-        }
-
-        .stat-card {
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            text-align: center;
-            border: 2px solid #e0e0e0;
-        }
-
-        .stat-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #4facfe;
-            display: block;
-        }
-
-        .stat-label {
-            color: #666;
-            margin-top: 5px;
-        }
-
         .control-buttons {
-            margin: 20px 0;
-            padding: 15px;
+            margin: 12px 0;
+            padding: 12px 12px 0px 12px;
             background: #f8f9fa;
             border-radius: 6px;
         }
@@ -398,7 +371,6 @@
         .translated-strings-container {
             background: #f8f9fa;
             border-radius: 8px;
-            padding: 20px;
             border: 1px solid #e0e0e0;
             max-height: 500px;
             overflow-y: auto;
@@ -406,11 +378,8 @@
 
         .translated-string-item {
             background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 15px;
+            padding: 16px;
             border: 1px solid #e9ecef;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
@@ -449,7 +418,7 @@
             border-radius: 4px;
             white-space: nowrap;
             font-family: 'Courier New', monospace;
-            max-width: 200px;
+            max-width: 50vw;
             overflow-x: auto;
         }
 
@@ -735,6 +704,9 @@
                     <button class="btn btn-danger" @click="clearSavedState" style="background: #dc3545;">
                         🗑️ 清除保存的状态
                     </button>
+                    <div v-if="ignoredStrings.size > 0" style="margin-top: 10px; padding: 8px 12px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px; font-size: 12px; color: #856404;">
+                        🚫 已忽略 {{ ignoredStrings.size }} 个字符串
+                    </div>
                 </div>
             </div>
 
@@ -753,33 +725,6 @@
                 <div class="step-title">
                     <span class="step-number">2</span>
                     选择要翻译的字符串
-                </div>
-
-                <!-- 统计信息 -->
-                <div class="stats">
-                    <div class="stat-card">
-                        <span class="stat-number">{{ strings.length }}</span>
-                        <div class="stat-label">总计字符串</div>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-number">{{ selectedCount }}</span>
-                        <div class="stat-label">已选择</div>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-number">{{ translatedCount }}</span>
-                        <div class="stat-label">已翻译</div>
-                    </div>
-                </div>
-
-                <!-- 控制按钮 -->
-                <div class="control-buttons">
-                    <button class="btn" @click="selectAll">📋 全选</button>
-                    <button class="btn btn-secondary" @click="selectNone">❌ 取消全选</button>
-                    <button class="btn btn-secondary" @click="selectUntranslated">🔄 选择未翻译</button>
-                    <button class="btn" @click="translateSelected" :disabled="loading || selectedCount === 0">
-                        <span v-if="loading">翻译中...</span>
-                        <span v-else>🌐 翻译选中项 ({{ selectedCount }})</span>
-                    </button>
                 </div>
 
                 <!-- 已翻译字符串独立展示区 -->
@@ -826,8 +771,25 @@
                     </div>
                 </div>
 
+                <h3 style="margin-bottom: 20px; color: #333; font-size: 1.2em; display: flex; align-items: center;">
+                    ● 待处理字符串 ({{ untranslatedStrings.length }}），已选择 {{ selectedCount }}
+                </h3>
+
+                 <!-- 控制按钮 -->
+                 <div>
+                    <button class="btn" @click="selectAll">📋 全选</button>
+                    <button class="btn btn-secondary" @click="selectNone">❌ 取消全选</button>
+                    <button class="btn btn-secondary" @click="ignoreSelected" :disabled="loading || selectedCount === 0">
+                        🚫 忽略选中项 ({{ selectedCount }})
+                    </button>
+                    <button class="btn" @click="translateSelected" :disabled="loading || selectedCount === 0">
+                        <span v-if="loading">翻译中...</span>
+                        <span v-else>🌐 翻译选中项 ({{ selectedCount }})</span>
+                    </button>
+                </div>
+
                 <!-- 字符串列表 -->
-                <div class="strings-container" @mousedown="startSelection" @mouseup="endSelection" @mousemove="updateDragSelection">
+                <div class="strings-container" @mousedown="startSelection" @mouseup="endSelection" @mousemove="updateDragSelection">    
                     <div v-for="(str, index) in untranslatedStrings" 
                          :key="str.unique_id || `${str.file_path}:${str.line_number}`" 
                          class="string-item" 
@@ -871,10 +833,6 @@
                 <button class="btn" @click="saveChanges" :disabled="loading">
                     <span v-if="loading">保存中...</span>
                     <span v-else>💾 保存更改</span>
-                </button>
-
-                <button class="btn btn-secondary" @click="ignoreSelected" :disabled="loading || selectedCount === 0">
-                    🚫 忽略选中项 ({{ selectedCount }})
                 </button>
             </div>
 
@@ -938,8 +896,10 @@
                     STORAGE_KEYS: {
                         CONFIG: 'transtation_config',
                         STRINGS: 'transtation_strings',
-                        SELECTION_STATE: 'transtation_selection'
-                    }
+                        SELECTION_STATE: 'transtation_selection',
+                        IGNORED_STRINGS: 'transtation_ignored_strings'
+                    },
+                    ignoredStrings: new Set() // 被忽略的字符串集合
                 }
             },
             computed: {
@@ -960,6 +920,7 @@
             },
             mounted() {
                 // 页面加载时恢复状态
+                this.loadIgnoredStrings(); // 先加载忽略字符串
                 this.loadSavedState();
                 // 监听页面卸载，保存状态
                 window.addEventListener('beforeunload', () => {
@@ -989,18 +950,20 @@
                         });
 
                         if (response.data.success) {
-                            this.strings = response.data.strings.map(str => {
-                                // 确保设置module_name
-                                if (!str.module_name) {
-                                    str.module_name = this.extractModuleName(str.file_path);
-                                }
-                                return {
-                                    ...str,
-                                    selected: true,
-                                    // 前端维护unique_id
-                                    unique_id: this.generateUniqueId(str)
-                                };
-                            });
+                            this.strings = response.data.strings
+                                .filter(str => !this.ignoredStrings.has(str.text)) // 过滤掉已忽略的字符串
+                                .map(str => {
+                                    // 确保设置module_name
+                                    if (!str.module_name) {
+                                        str.module_name = this.extractModuleName(str.file_path);
+                                    }
+                                    return {
+                                        ...str,
+                                        selected: true,
+                                        // 前端维护unique_id
+                                        unique_id: this.generateUniqueId(str)
+                                    };
+                                });
                             this.currentStep = 2;
                             this.updateCounts();
                             this.successMessage = `成功提取 ${response.data.count} 个中文字符串`;
@@ -1111,38 +1074,30 @@
                     }
                 },
 
-                async ignoreSelected() {
-                    const selectedTexts = this.strings
-                        .filter(str => str.selected)
-                        .map(str => str.text);
+                ignoreSelected() {
+                    const selectedStrings = this.strings.filter(str => str.selected);
 
-                    if (selectedTexts.length === 0) {
+                    if (selectedStrings.length === 0) {
                         this.error = '请至少选择一个字符串进行忽略';
                         return;
                     }
 
-                    this.loading = true;
-                    this.error = '';
+                    // 将选中的字符串添加到忽略集合
+                    selectedStrings.forEach(str => {
+                        this.ignoredStrings.add(str.text);
+                    });
 
-                    try {
-                        const response = await axios.post('/api/save', {
-                            strings: [],
-                            ignored_strings: selectedTexts
-                        });
-
-                        if (response.data.success) {
-                            // 从列表中移除忽略的字符串
-                            this.strings = this.strings.filter(str => !str.selected);
-                            this.updateCounts();
-                            this.successMessage = `已忽略 ${selectedTexts.length} 个字符串`;
-                        } else {
-                            this.error = response.data.error || '忽略失败';
-                        }
-                    } catch (err) {
-                        this.error = err.response?.data?.error || '忽略请求失败';
-                    } finally {
-                        this.loading = false;
-                    }
+                    // 从列表中移除忽略的字符串
+                    this.strings = this.strings.filter(str => !str.selected);
+                    this.updateCounts();
+                    
+                    // 保存忽略的字符串到localStorage
+                    this.saveIgnoredStrings();
+                    
+                    this.successMessage = `已忽略 ${selectedStrings.length} 个字符串`;
+                    setTimeout(() => {
+                        this.successMessage = '';
+                    }, 3000);
                 },
 
                 selectAll() {
@@ -1169,30 +1124,6 @@
 
                 selectNone() {
                     this.strings.forEach(str => str.selected = false);
-                    this.updateSelection();
-                },
-
-                selectUntranslated() {
-                    // 先取消所有选择
-                    this.strings.forEach(str => str.selected = false);
-                    
-                    // 限制最大选择数量，只选择未翻译的
-                    let selectedCount = 0;
-                    this.strings.forEach(str => {
-                        if (!str.translation && selectedCount < this.config.batchSize) {
-                            str.selected = true;
-                            selectedCount++;
-                        }
-                    });
-                    
-                    const untranslatedTotal = this.strings.filter(str => !str.translation).length;
-                    if (untranslatedTotal > this.config.batchSize) {
-                        this.successMessage = `已选择前 ${this.config.batchSize} 个未翻译条目（共${untranslatedTotal}个未翻译）`;
-                        setTimeout(() => {
-                            this.successMessage = '';
-                        }, 3000);
-                    }
-                    
                     this.updateSelection();
                 },
 
@@ -1427,16 +1358,18 @@
                                 }
                                 
                                 if (allStrings.length > 0) {
-                                    // 确保每个字符串都有正确的unique_id和module_name
-                                    this.strings = allStrings.map(str => {
-                                        if (!str.module_name) {
-                                            str.module_name = this.extractModuleName(str.file_path);
-                                        }
-                                        if (!str.unique_id) {
-                                            str.unique_id = this.generateUniqueId(str);
-                                        }
-                                        return str;
-                                    });
+                                    // 确保每个字符串都有正确的unique_id和module_name，并过滤掉已忽略的字符串
+                                    this.strings = allStrings
+                                        .filter(str => !this.ignoredStrings.has(str.text)) // 过滤掉已忽略的字符串
+                                        .map(str => {
+                                            if (!str.module_name) {
+                                                str.module_name = this.extractModuleName(str.file_path);
+                                            }
+                                            if (!str.unique_id) {
+                                                str.unique_id = this.generateUniqueId(str);
+                                            }
+                                            return str;
+                                        });
 
                                     axios.post('/api/update_current_strings', {
                                         "strings": allStrings
@@ -1477,7 +1410,7 @@
 
                 // 清除保存的状态（带确认）
                 clearSavedState() {
-                    if (confirm('确定要清除所有保存的状态吗？这将删除配置、字符串数据和选择状态。')) {
+                    if (confirm('确定要清除所有保存的状态吗？这将删除配置、字符串数据、选择状态和忽略的字符串。')) {
                         try {
                             // 清除配置和字符串数据
                             localStorage.removeItem(this.STORAGE_KEYS.CONFIG);
@@ -1487,6 +1420,9 @@
                             for (let i = 0; localStorage.getItem(`${this.STORAGE_KEYS.STRINGS}_${i}`); i++) {
                                 localStorage.removeItem(`${this.STORAGE_KEYS.STRINGS}_${i}`);
                             }
+                            
+                            // 清除忽略的字符串
+                            this.clearIgnoredStrings();
                             
                             this.successMessage = '状态清除完成！';
                             setTimeout(() => {
@@ -1499,6 +1435,40 @@
                             console.warn('清除状态失败:', error);
                         }
                     }
+                },
+
+                // ==================== 忽略字符串管理 ====================
+
+                // 保存忽略的字符串到localStorage
+                saveIgnoredStrings() {
+                    try {
+                        const ignoredArray = Array.from(this.ignoredStrings);
+                        localStorage.setItem(this.STORAGE_KEYS.IGNORED_STRINGS, JSON.stringify(ignoredArray));
+                        console.log('忽略字符串已保存:', ignoredArray.length);
+                    } catch (error) {
+                        console.warn('保存忽略字符串失败:', error);
+                    }
+                },
+
+                // 从localStorage加载忽略的字符串
+                loadIgnoredStrings() {
+                    try {
+                        const saved = localStorage.getItem(this.STORAGE_KEYS.IGNORED_STRINGS);
+                        if (saved) {
+                            const ignoredArray = JSON.parse(saved);
+                            this.ignoredStrings = new Set(ignoredArray);
+                            console.log('忽略字符串已加载:', ignoredArray.length);
+                        }
+                    } catch (error) {
+                        console.warn('加载忽略字符串失败:', error);
+                        this.ignoredStrings = new Set();
+                    }
+                },
+
+                // 清除忽略字符串
+                clearIgnoredStrings() {
+                    this.ignoredStrings.clear();
+                    localStorage.removeItem(this.STORAGE_KEYS.IGNORED_STRINGS);
                 },
 
                 // ==================== 辅助方法 ====================
