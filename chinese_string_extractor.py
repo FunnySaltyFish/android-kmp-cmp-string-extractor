@@ -129,6 +129,18 @@ def translate_strings():
                 string_obj = selected_strings_dict[unique_id]
                 string_obj.translation = trans.get('translation', '')
                 string_obj.resource_name = trans.get('name', '') or trans.get('resource_name', '')
+                # 新增：可选参数名列表（仅在必要时由 AI 提供）
+                if isinstance(trans.get('arg_names'), list):
+                    string_obj.arg_names = [str(x) for x in trans.get('arg_names')]
+                # 新增：可选 args 鍵值对（优先于 arg_names 使用）
+                if isinstance(trans.get('args'), list):
+                    try:
+                        string_obj.args = [
+                            { 'name': str(it.get('name', '')).strip(), 'value': str(it.get('value', '')).strip() }
+                            for it in trans.get('args') if isinstance(it, dict)
+                        ]
+                    except Exception:
+                        pass
         
         print(f"翻译完成，更新了 {min(len(selected_ids), len(results))} 个字符串")
         
@@ -216,6 +228,18 @@ def translate_batch_api():
                     if translation and resource_name:
                         string_obj.translation = translation
                         string_obj.resource_name = resource_name
+                        # 新增：写入可选 arg_names
+                        if isinstance(trans.get('arg_names'), list):
+                            string_obj.arg_names = [str(x) for x in trans.get('arg_names')]
+                        # 新增：可选 args（优先于 arg_names 使用）
+                        if isinstance(trans.get('args'), list):
+                            try:
+                                string_obj.args = [
+                                    { 'name': str(it.get('name', '')).strip(), 'value': str(it.get('value', '')).strip() }
+                                    for it in trans.get('args') if isinstance(it, dict)
+                                ]
+                            except Exception:
+                                pass
                         updated_count += 1
                     else:
                         translation_errors.append(f"字符串 '{string_obj.text}' 翻译结果不完整")
@@ -336,7 +360,6 @@ def save_changes():
         
         # 生成XML文件和执行替换
         for module_name, strings in modules.items():
-            module_path = project_root / module_name
 
             # 根据模板生成中文/目标语言 XML
             replacer.generate_strings_xml_with_template(

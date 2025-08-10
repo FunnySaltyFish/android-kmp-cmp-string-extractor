@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import openai
 from lxml import etree as LET
 from traceback import print_exc
+from httpx import Timeout
 
 @dataclass
 class ChineseString:
@@ -22,13 +23,13 @@ class ChineseString:
     resource_name: str = ""  # 生成的资源名
     translation: str = ""  # 英文翻译
     selected: bool = True  # 是否选中进行翻译
-    is_format_string: bool = False  # 是否包含格式化参数
-    format_params: List[str] = None  # 格式化参数名称列表（如 ["count", "name"]）
+    # 统一使用 args：若 len(args)>0 则视为格式化字符串
+    args: List[Dict[str, str]] = None  # 可选：参数键值对 [{"name", "value"}]
     module_name: str = ""  # 模块名
 
     def __post_init__(self):
-        if self.format_params is None:
-            self.format_params = []
+        if self.args is None:
+            self.args = []
         # 自动生成模块名（从文件路径提取）
         if not self.module_name:
             path_parts = Path(self.file_path).parts
@@ -150,17 +151,23 @@ class ChineseStringExtractor:
                     end_line = min(len(lines), i + 2)
                     context = '\n'.join(lines[start_line:end_line])
                     
-                    # 检查是否是格式化字符串
-                    format_params = self.extract_format_params(text)
-                    is_format_string = len(format_params) > 0
-                    
+                    # 预构造 args（若存在占位），name=占位为合法标识符则用其，否则使用 argN
+                    placeholder_params = self.extract_format_params(text)
+                    args_list: List[Dict[str, str]] = []
+                    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+                    for idx, expr in enumerate(placeholder_params):
+                        expr_str = str(expr).strip()
+                        if not expr_str:
+                            continue
+                        name = expr_str if ident_re.match(expr_str) else f"arg{idx+1}"
+                        args_list.append({"name": name, "value": expr_str})
+
                     chinese_string = ChineseString(
                         text=text,
                         file_path=str(file_path.relative_to(self.project_root).as_posix()),
                         line_number=i,
                         context=context,
-                        is_format_string=is_format_string,
-                        format_params=format_params
+                        args=args_list
                     )
                     strings.append(chinese_string)
         
@@ -339,10 +346,13 @@ class TranslationService:
                     {"role": "system", "content": "你是一个专业的软件国际化翻译专家。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                # （total, connect, sock_read, sock_connect）
+                timeout=Timeout(120.0, read=120.0, write=20.0, connect=20.0)
             )
             
             result_text = response.choices[0].message.content
+            print("resp:", result_text)
             # 尝试解析JSON
             try:
                 return json.loads(result_text)
@@ -356,6 +366,7 @@ class TranslationService:
                     
         except Exception as e:
             print(f"翻译失败: {e}")
+            print_exc()
             return []
 
 
@@ -392,6 +403,7 @@ class StringReplacer:
 
             # 加载现有 XML，尽量保留原有注释与结构
             existing_names: Dict[str, str] = {}
+            tree: LET.ElementTree
             if xml_file.exists():
                 try:
                     tree = LET.parse(str(xml_file))
@@ -410,18 +422,27 @@ class StringReplacer:
                 tree = LET.ElementTree(root)
 
             # 仅追加新增项，避免覆盖与删除，最大化保持原有结构/注释
+            # 简单缩进设置（尽量与常见 two-spaces 对齐）
+            if root.text is None or root.text.strip() == "":
+                root.text = "\n  "
             for s in strings:
                 if s.resource_name and s.resource_name not in existing_names:
                     elem = LET.SubElement(root, "string")
                     elem.set("name", s.resource_name)
-                    elem.text = s.translation if lang != "zh" else s.text
+                    base_text = s.translation if lang != "zh" else s.text
+                    # 用 args 的 name 统一占位符（将 ${value}/$value 规范化为 ${name}/$name）
+                    if isinstance(s.args, list) and s.args:
+                        base_text = self._normalize_placeholders(base_text or "", s.args)
+                    elem.text = base_text
+                    elem.tail = "\n  "
 
             # 保存，保留注释，带 XML 声明
             tree.write(
                 str(xml_file),
                 encoding="utf-8",
                 xml_declaration=True,
-                pretty_print=True
+                pretty_print=True,
+                indent=4
             )
             return True
         except Exception as e:
@@ -450,21 +471,43 @@ class StringReplacer:
             for s in strings:
                 if not s.resource_name:
                     continue
-                # 根据格式化参数构造 args（假设变量名与参数名一致）
-                args_map: Dict[str, str] = {}
-                if s.format_params:
-                    for name in s.format_params:
-                        if isinstance(name, (list, tuple)) and len(name) == 2:
-                            # 兼容旧格式返回的 (g1, g2)
-                            pname = name[0] or name[1]
-                        else:
-                            pname = name
-                        if pname:
-                            args_map[str(pname)] = str(pname)
+                # 根据优先级生成 args 列表：
+                # 1) 若 s.args 已由 AI 提供，直接使用（做基本清洗）
+                # 2) 否则根据 format_params + arg_names 推导
+                args_list: List[Dict[str, str]] = []
+
+                def _clean_arg_item(item: Dict[str, str]) -> Optional[Dict[str, str]]:
+                    if not isinstance(item, dict):
+                        return None
+                    name = str(item.get("name", "")).strip()
+                    value = str(item.get("value", "")).strip()
+                    if not name:
+                        return None
+                    if not value:
+                        value = name
+                    return {"name": name, "value": value}
+
+                if isinstance(s.args, list) and s.args:
+                    for it in s.args:
+                        cleaned = _clean_arg_item(it)
+                        if cleaned:
+                            args_list.append(cleaned)
+                else:
+                    # 从原文中提取占位，自动构造 name=value
+                    placeholder_pattern = re.compile(r"\$\{(.+?)\}|\$(\w+)")
+                    raw_matches = placeholder_pattern.findall(s.text or "")
+                    for idx, (g1, g2) in enumerate(raw_matches):
+                        raw_expr = (g1 or g2 or "").strip()
+                        if not raw_expr:
+                            continue
+                        def _is_identifier(candidate: str) -> bool:
+                            return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", candidate))
+                        final_name = raw_expr if _is_identifier(raw_expr) else f"arg{idx+1}"
+                        args_list.append({"name": final_name, "value": raw_expr})
 
                 # 通过用户脚本生成替换表达式（Kotlin 代码片段）
                 try:
-                    replaced_expr = self._get_replaced_text(s.resource_name, args_map)
+                    replaced_expr = self._get_replaced_text(s.resource_name, args_list)
                 except Exception:
                     # 回退策略
                     replaced_expr = f"ResStrings.{s.resource_name}"
@@ -503,18 +546,23 @@ class StringReplacer:
     def _load_replacement_script(
         self,
         script: str
-    ) -> tuple[Callable[[str, Dict[str, str]], str], Callable[[str, str], str]]:
+    ) -> tuple[Callable[[str, List[Dict[str, str]]], str], Callable[[str, str], str]]:
         """
         加载用户提供的 Python 脚本，导出：
-          - get_replaced_text(res_name: str, args: dict[str, str]) -> str
+          - get_replaced_text(res_name: str, args: list[dict]) -> str
           - get_import_statements(module_name: str, file_name: str) -> str
         若未提供或解析失败，提供安全的默认实现。
         """
-        def _default_get_replaced_text(res_name: str, args: Dict[str, str]) -> str:
+        def _default_get_replaced_text(res_name: str, args: List[Dict[str, str]]) -> str:
             if not args:
                 return f"ResStrings.{res_name}"
-            # 默认按照 Kotlin named args 的形式拼接
-            joined = ", ".join([f"{k} = ({v}).toString()" for k, v in args.items()])
+            # 按 Kotlin 命名参数形式拼接：name = (value).toString()
+            parts: List[str] = []
+            for item in args:
+                name = str(item.get("name", "")).strip() or "arg"
+                value = str(item.get("value", "")).strip() or name
+                parts.append(f"{name} = ({value}).toString()")
+            joined = ", ".join(parts)
             return f"ResStrings.{res_name}.format({joined})"
 
         def _default_get_import_statements(module_name: str, file_name: str) -> str:
@@ -574,6 +622,30 @@ class StringReplacer:
 
         lines.insert(insert_at, import_line.rstrip('\n'))
         return '\n'.join(lines)
+
+    def _normalize_placeholders(self, text: str, args: List[Dict[str, str]]) -> str:
+        """将文本中的占位统一替换为基于 args 的 name 形式。
+        - 匹配 ${value} → ${name}
+        - 若 value 是合法标识符，同时匹配 $value → $name
+        """
+        if not text:
+            return text
+        normalized = text
+        for item in args:
+            name = str(item.get("name", "")).strip()
+            value = str(item.get("value", "")).strip()
+            if not name or not value:
+                continue
+            # 替换 ${value} -> ${name}
+            try:
+                pattern_braced = re.escape("${" + value + "}")
+                normalized = re.sub(pattern_braced, "${" + name + "}", normalized)
+            except re.error:
+                pass
+            # 替换 $value -> $name（仅当 value 是合法标识符）
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value):
+                normalized = re.sub(r"\$" + re.escape(value) + r"\b", "$" + name, normalized)
+        return normalized
 
 def _parse_strings_xml(xml_path: Path) -> dict[str, str]:
     """解析 strings_*.xml，返回 name->text 映射。不存在返回空。"""

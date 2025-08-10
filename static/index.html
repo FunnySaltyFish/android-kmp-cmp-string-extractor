@@ -759,24 +759,24 @@
                                 id="replacementScript" 
                                 v-model="config.replacementScript" 
                                 rows="8"
-                                placeholder="在此粘贴 Python 脚本：定义 get_replaced_text 和 get_import_statements，用于生成替换表达式与 import 行"
+                                placeholder="在此粘贴 Python 脚本：定义 get_replaced_text(res_name: str, args: list[dict]) 与 get_import_statements，用于生成替换表达式与 import 行；args 形如 [{name: string, value: string}]"
                             ></textarea>
                             <small style="color: #666; margin-top: 5px; display: block;">后端会执行该脚本以生成替换表达式和 import 行；仅在本地使用，注意安全。</small>
                             <details style="margin-top:8px;">
                                 <summary>查看脚本示例</summary>
                                 <pre style="margin-top:8px; white-space: pre-wrap; background:#f8f9fa; padding:10px; border:1px solid #e0e0e0; border-radius:4px;">
-# CMP ResStrings 示例（含命名参数）
-def get_replaced_text(res_name: str, args: dict[str, str]) -> str:
-    if len(args) == 0:
+# CMP ResStrings 示例（含命名参数）。args: list[dict], 每项形如 {"name": str, "value": str}
+def get_replaced_text(res_name: str, args: list[dict]) -> str:
+    if not args:
         return f"ResStrings.{res_name}"
-    formatter = ", ".join([f"{k} = {v}.toString()" for k, v in args.items()])
+    formatter = ", ".join([f"{item.get('name')} = ({item.get('value')}).toString()" for item in args])
     return f"ResStrings.{res_name}.format(" + formatter + ")"
 
 def get_import_statements(module_name: str, file_name: str) -> str:
     return f"import com.funny.translation.{module_name}.strings.ResString"
 
-# Android R 资源示例
-def get_replaced_text(res_name: str, args: dict[str, str]) -> str:
+# Android R 资源示例（通常无需 import）
+def get_replaced_text(res_name: str, args: list[dict]) -> str:
     return f"R.string.{res_name}"
 
 def get_import_statements(module_name: str, file_name: str) -> str:
@@ -793,6 +793,9 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 rows="6"
                                 placeholder="在这里输入自定义的翻译提示，例如：请将以下文本翻译成符合软件界面习惯的英文..."
                             ></textarea>
+                            <small style="color: #666;">
+                                使用大括号包裹变量，双大括号以转译大括号自身
+                            </small>
                         </div>
                         
                         <div class="form-group">
@@ -829,6 +832,10 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                     <span v-if="loading">提取中...</span>
                     <span v-else>🔍 提取字符串</span>
                 </button>
+
+                <small style="color: #666;">
+                    提取字符串会覆盖当前结果，请确保先保存已翻译结果
+                </small>
                 
                 <!-- 状态管理按钮 -->
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;">
@@ -1018,22 +1025,27 @@ def get_import_statements(module_name: str, file_name: str) -> str:
 
     <script>
         const { createApp } = Vue;
-        const DEFTAULT_PROMPT = `你是一个专业的软件国际化翻译专家。请将以下中文字符串翻译成{target_language}，并为每个字符串生成一个合适的资源名称。
+        const DEFTAULT_PROMPT = `请将以下中文字符串翻译成{target_language}，并生成资源名（snake_case）。
 
-要求：
-1. 翻译要准确、自然，符合软件界面的语言习惯
-2. 资源名称使用snake_case格式，简洁明了，能体现字符串的用途
-3. 对于包含格式化参数（如\${{name}}）的字符串，保持参数不变。如："共有\${{count}}个模型" -> "\${{count}} models in total"
-4. "译站"翻译为"Transtation" 
-5. 返回JSON格式，包含name、translation字段
+规则：
+1) 翻译自然、符合界面习惯；"译站"固定译为"Transtation"。
+2) 保持占位写法不变（如 \${{...}} / $name）。
+3) 若占位内部是带有运算符的表达式（例如：\${{countDown / 1000}}），返回 args 数组，按顺序给出键值对：[{{"name": string, "value": string}}]；仅必要时提供 args；name 用 lowerCamelCase；翻译后文本中使用 name 而非原始 value
+4) 返回 JSON 数组，每项包含：name, translation，可选 args。
 
-已有的翻译参考：
+示例：
+输入："\${{countDown / 1000}}s 后暂停"
+输出：[
+  {{"name": "pause_after_seconds", "translation": "Pause after \${{countDownSeconds}}s", "args": [{{"name": "countDownSeconds", "value": "countDown / 1000"}}]}}
+]
+
+参考翻译：
 {reference_translations}
 
-待翻译字符串：
+待翻译：
 {source_strings}
 
-请返回JSON数组格式的结果。`
+只输出 JSON 数组。`
 
         createApp({
             data() {
@@ -1197,9 +1209,9 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 .filter(str => !this.ignoredStrings.has(str.text)) // 过滤掉已忽略的字符串
                                 .map(str => {
                                     // 确保设置module_name
-                                    if (!str.module_name) {
-                                        str.module_name = this.extractModuleName(str.file_path);
-                                    }
+                                     if (!str.module_name) {
+                                         str.module_name = this.extractModuleName(str.file_path);
+                                     }
                                     return {
                                         ...str,
                                         selected: true,
@@ -1632,8 +1644,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 resource_name: str.resource_name || '',
                                 translation: str.translation || '',
                                 selected: str.selected,
-                                is_format_string: str.is_format_string || false,
-                                format_params: str.format_params || [],
+                                args: Array.isArray(str.args) ? str.args : (Array.isArray(str.arg_names) && str.arg_names.length > 0 ? str.arg_names.map((n, i) => ({ name: n, value: n })) : []),
                                 module_name: str.module_name || this.extractModuleName(str.file_path),
                                 // unique_id: str.unique_id || this.generateUniqueId(str)
                                 // unique_id 来自 module_name 以及 text，故而无需保存
@@ -1720,6 +1731,17 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                     this.strings = allStrings
                                         .filter(str => !this.ignoredStrings.has(str.text)) // 过滤掉已忽略的字符串
                                         .map(str => {
+                                            if (!Array.isArray(str.args)) {
+                                                // 兼容旧数据，基于文本占位自动生成 args
+                                                const placeholders = Array.from((str.text || '').matchAll(/\$\{(.+?)\}|\$(\w+)/g));
+                                                const result = [];
+                                                const ident = /^[A-Za-z_][A-Za-z0-9_]*$/;
+                                                placeholders.forEach((m, i) => {
+                                                    const v = (m[1] || m[2] || '').trim();
+                                                    if (v) result.push({ name: ident.test(v) ? v : `arg${i+1}` , value: v });
+                                                });
+                                                str.args = result;
+                                            }
                                             if (!str.module_name) {
                                                 str.module_name = this.extractModuleName(str.file_path);
                                             }
