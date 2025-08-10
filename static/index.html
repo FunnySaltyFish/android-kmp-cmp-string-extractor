@@ -621,6 +621,33 @@
                 padding: 15px;
             }
         }
+
+        /* 赞助/支持作者 提示样式 */
+        .sponsor-section {
+            margin-top: 30px;
+            padding: 16px;
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .sponsor-section .sponsor-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .sponsor-section a {
+            display: inline-block;
+            margin-top: 6px;
+            background: linear-gradient(135deg, #ff7eb3 0%, #ff758c 100%);
+            color: #fff;
+            text-decoration: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+        }
+        .sponsor-section a:hover {
+            opacity: 0.92;
+        }
     </style>
 </head>
 <body>
@@ -979,6 +1006,12 @@ def get_import_statements(module_name: str, file_name: str) -> str:
             <div v-if="loading && strings.length === 0" class="loading">
                 <div class="spinner"></div>
                 <div>正在处理中，请稍候...</div>
+            </div>
+
+            <!-- 赞助提示 -->
+            <div class="sponsor-section">
+                <div class="sponsor-title">觉得好用？感觉有帮助？</div>
+                <a href="https://web.funnysaltyfish.fun/" target="_blank" rel="noopener">💖 支持作者以继续开发</a>
             </div>
         </div>
 

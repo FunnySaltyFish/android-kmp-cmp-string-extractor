@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 import json
+import os
+import signal
+import sys
+import atexit
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from dataclasses import asdict
 from flask import Flask, request, jsonify
 from helper import ChineseString, StringReplacer, TranslationService, ChineseStringExtractor
@@ -23,6 +27,62 @@ batch_translation_state = {
  
 extracted_dir = "static/extracted"
 extracted_file = extracted_dir + "/test.json"
+
+# 赞助信息
+SPONSOR_URL = "https://web.funnysaltyfish.fun/?source=string_extractor_api"
+_sponsor_tip_printed = False
+
+
+def print_sponsor_tip_once(reason: Optional[str] = None) -> None:
+    """在退出/中断时打印赞助提示，只打印一次。"""
+    global _sponsor_tip_printed
+    if _sponsor_tip_printed:
+        return
+    _sponsor_tip_printed = True
+    if reason:
+        print(f"\n提示：{reason}")
+    print("觉得好用？感觉有帮助？支持作者以继续开发：")
+    print(SPONSOR_URL + "\n")
+
+
+def _register_exit_hooks() -> None:
+    """注册退出钩子与信号处理。"""
+    # atexit 钩子
+    atexit.register(lambda: print_sponsor_tip_once("程序已退出"))
+
+    # SIGINT (Ctrl+C)
+    try:
+        previous_sigint = signal.getsignal(signal.SIGINT)
+
+        def _handle_sigint(signum, frame):
+            print_sponsor_tip_once("检测到 Ctrl+C，正在退出")
+            if callable(previous_sigint) and previous_sigint not in (signal.SIG_DFL, signal.SIG_IGN):
+                try:
+                    previous_sigint(signum, frame)
+                except Exception:
+                    pass
+
+        signal.signal(signal.SIGINT, _handle_sigint)
+    except Exception:
+        pass
+
+    # SIGTERM
+    try:
+        sigterm = getattr(signal, "SIGTERM", None)
+        if sigterm is not None:
+            previous_sigterm = signal.getsignal(sigterm)
+
+            def _handle_sigterm(signum, frame):
+                print_sponsor_tip_once("收到停止信号，正在退出")
+                if callable(previous_sigterm) and previous_sigterm not in (signal.SIG_DFL, signal.SIG_IGN):
+                    try:
+                        previous_sigterm(signum, frame)
+                    except Exception:
+                        pass
+
+            signal.signal(sigterm, _handle_sigterm)
+    except Exception:
+        pass
 
 @app.route('/')
 def index():
@@ -397,6 +457,16 @@ def save_changes():
         return jsonify({'error': f'保存失败: {str(e)}'}), 500
 
 if __name__ == '__main__':
+    # 仅在实际运行的进程中注册（避免 Flask debug 重载导致多次注册）
+    is_reloader_child = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+    if not os.environ.get('FLASK_RUN_FROM_CLI') or is_reloader_child:
+        _register_exit_hooks()
+
     print("启动中文字符串提取工具...")
     print("请在浏览器中访问: http://localhost:5000")
-    app.run(debug=True, port=5000)
+    try:
+        app.run(debug=True, port=5000)
+    except KeyboardInterrupt:
+        # 兜底：Ctrl+C 时打印一次提示
+        print_sponsor_tip_once("检测到 Ctrl+C，正在退出")
+        sys.exit(0)
