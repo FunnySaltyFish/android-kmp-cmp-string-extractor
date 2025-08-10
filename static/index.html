@@ -1443,7 +1443,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                     try {
                         const response = await axios.post('/api/save', {
                             project_root: this.config.projectPath,
-                            strings: this.strings,
+                            strings: this.translatedStrings, // 仅传增量：已翻译好的
                             ignored_strings: [],
                             target_xml_path_template: this.config.targetXmlPath,
                             target_language: this.config.targetLanguage,

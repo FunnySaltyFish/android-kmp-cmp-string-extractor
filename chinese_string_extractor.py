@@ -321,6 +321,7 @@ def save_changes():
     if not project_root.exists():
         return jsonify({'error': f'项目路径 {project_root} 不存在'}), 400
     
+    # 仅接收已翻译好的字符串（增量），避免全量覆盖
     updated_strings = data.get('strings', [])
     ignored_strings = data.get('ignored_strings', [])
     target_xml_path_template = data.get('target_xml_path_template')
@@ -334,8 +335,19 @@ def save_changes():
             unique_id = updated.get('unique_id') or f"{updated.get('file_path', '')}:{updated.get('line_number', '')}"
             if unique_id in strings_dict:
                 s = strings_dict[unique_id]
+                # 覆盖资源名与翻译
                 s.resource_name = updated.get('resource_name', s.resource_name)
-                s.translation = updated.get('english_translation', s.translation)
+                # 兼容前端字段名可能为 translation
+                s.translation = updated.get('translation', updated.get('english_translation', s.translation))
+                # 兼容 args（优先）
+                if isinstance(updated.get('args'), list):
+                    try:
+                        s.args = [
+                            { 'name': str(it.get('name', '')).strip(), 'value': str(it.get('value', '')).strip() }
+                            for it in updated.get('args') if isinstance(it, dict)
+                        ]
+                    except Exception:
+                        pass
         
         # 保存忽略的字符串
         if ignored_strings:

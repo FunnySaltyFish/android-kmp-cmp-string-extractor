@@ -422,11 +422,32 @@ class StringReplacer:
                 tree = LET.ElementTree(root)
 
             # 仅追加新增项，避免覆盖与删除，最大化保持原有结构/注释
-            # 简单缩进设置（尽量与常见 two-spaces 对齐）
-            if root.text is None or root.text.strip() == "":
-                root.text = "\n  "
+            # 统一缩进控制：
+            # - 若将要追加元素，则确保：
+            #   1) 若已存在子元素，则把“最后一个现有子元素”的 tail 设为 "\n    "，让下一个元素得到正确缩进；
+            #   2) 若不存在子元素，则把 root.text 设为 "\n    "；
+            #   3) 对于新追加的元素，除最后一个外 tail 设为 "\n    "，最后一个设为 "\n"，避免 </resources> 前多出空格。
+            to_append: List[ChineseString] = []
             for s in strings:
                 if s.resource_name and s.resource_name not in existing_names:
+                    to_append.append(s)
+
+            if to_append:
+                # 情况1：已有子元素，修正最后一个现有元素的 tail，保证第一个追加元素有缩进
+                last_existing_element = None
+                for child in reversed(root):
+                    if isinstance(getattr(child, 'tag', None), str):  # 仅元素节点
+                        last_existing_element = child
+                        break
+                if last_existing_element is not None:
+                    last_existing_element.tail = "\n    "
+                else:
+                    # 情况2：没有任何子元素，让 root.text 提供初始缩进
+                    if root.text is None or root.text.strip() == "":
+                        root.text = "\n    "
+
+                # 依次追加元素，并设置合适的 tail
+                for idx, s in enumerate(to_append):
                     elem = LET.SubElement(root, "string")
                     elem.set("name", s.resource_name)
                     base_text = s.translation if lang != "zh" else s.text
@@ -434,7 +455,8 @@ class StringReplacer:
                     if isinstance(s.args, list) and s.args:
                         base_text = self._normalize_placeholders(base_text or "", s.args)
                     elem.text = base_text
-                    elem.tail = "\n  "
+                    # 最后一个元素 tail 仅为换行，避免 </resources> 前出现多余空格
+                    elem.tail = "\n" if idx == len(to_append) - 1 else "\n    "
 
             # 保存，保留注释，带 XML 声明
             tree.write(
@@ -442,7 +464,6 @@ class StringReplacer:
                 encoding="utf-8",
                 xml_declaration=True,
                 pretty_print=True,
-                indent=4
             )
             return True
         except Exception as e:
