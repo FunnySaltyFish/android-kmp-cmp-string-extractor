@@ -6,6 +6,8 @@
     <title>中文字符串提取和翻译工具 - Transtation</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
     <style>
         * {
             margin: 0;
@@ -257,24 +259,6 @@
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
-        }
-
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 6px;
-            margin: 20px 0;
-            border: 1px solid #f5c6cb;
-        }
-
-        .success {
-            background: #d4edda;
-            color: #155724;
-            padding: 15px;
-            border-radius: 6px;
-            margin: 20px 0;
-            border: 1px solid #c3e6cb;
         }
 
         .control-buttons {
@@ -861,15 +845,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                 </div>
             </div>
 
-            <!-- 错误信息 -->
-            <div v-if="error" class="error">
-                ❌ {{ error }}
-            </div>
-
-            <!-- 成功信息 -->
-            <div v-if="successMessage" class="success">
-                ✅ {{ successMessage }}
-            </div>
+            <!-- 全局提示改为 snackbar（Toastify），不再内联显示错误/成功块 -->
 
             <!-- 步骤2: 选择字符串 -->
             <div v-if="strings.length > 0" class="step" :class="{ active: currentStep === 2 }">
@@ -1114,6 +1090,22 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                     }
                 }
             },
+            watch: {
+                error(newVal) {
+                    if (newVal && newVal.trim()) {
+                        this.showError(newVal);
+                        // 清空内存，避免重复弹
+                        this.$nextTick(() => { this.error = ''; });
+                    }
+                },
+                successMessage(newVal) {
+                    if (newVal && newVal.trim()) {
+                        this.showSuccess(newVal);
+                        // 自动清空
+                        this.$nextTick(() => { this.successMessage = ''; });
+                    }
+                }
+            },
             computed: {
                 // 筛选出已翻译的字符串（有翻译结果且有资源名称）
                 translatedStrings() {
@@ -1150,6 +1142,33 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                 }, 30000); // 每30秒保存一次
             },
             methods: {
+                // 统一 Toast 方法
+                showSuccess(message) {
+                    Toastify({
+                        text: `✅ ${message}`,
+                        duration: 3000,
+                        gravity: 'top',
+                        position: 'right',
+                        close: true,
+                        stopOnFocus: true,
+                        style: {
+                            background: 'linear-gradient(135deg, #28a745 0%, #34ce57 100%)'
+                        }
+                    }).showToast();
+                },
+                showError(message) {
+                    Toastify({
+                        text: `❌ ${message}`,
+                        duration: 5000,
+                        gravity: 'top',
+                        position: 'right',
+                        close: true,
+                        stopOnFocus: true,
+                        style: {
+                            background: 'linear-gradient(135deg, #dc3545 0%, #e4606d 100%)'
+                        }
+                    }).showToast();
+                },
                 parseGlobs(globsText) {
                     if (!globsText) return [];
                     return globsText
@@ -1190,12 +1209,12 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 });
                             this.currentStep = 2;
                             this.updateCounts();
-                            this.successMessage = `成功提取 ${response.data.count} 个中文字符串`;
+                            this.showSuccess(`成功提取 ${response.data.count} 个中文字符串`);
                         } else {
-                            this.error = response.data.error || '提取失败';
+                            this.showError(response.data.error || '提取失败');
                         }
                     } catch (err) {
-                        this.error = err.response?.data?.error || '网络错误';
+                        this.showError(err.response?.data?.error || '网络错误');
                     } finally {
                         this.loading = false;
                     }
@@ -1213,7 +1232,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                         .map(str => str.unique_id);
 
                     if (selectedIds.length === 0) {
-                        this.error = '请至少选择一个字符串进行翻译';
+                        this.showError('请至少选择一个字符串进行翻译');
                         return;
                     }
 
@@ -1322,7 +1341,8 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 }
                             } catch (err) {
                                 // 单个批次失败，停止整个翻译过程
-                                this.error = err.response?.data?.error || err.message || `批次 ${batchIndex + 1} 翻译失败`;
+                                const errMsg = err.response?.data?.error || err.message || `批次 ${batchIndex + 1} 翻译失败`;
+                                this.showError(errMsg);
                                 this.restoreSelectionStates();
                                 break;
                             }
@@ -1332,11 +1352,11 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                         if (!this.batchTranslation.stopping && !this.error) {
                             this.currentStep = 3;
                             this.updateCounts();
-                            this.successMessage = `成功翻译 ${this.batchTranslation.completedCount} 个字符串`;
+                            this.showSuccess(`成功翻译 ${this.batchTranslation.completedCount} 个字符串`);
                         }
 
                     } catch (err) {
-                        this.error = err.message || '批量翻译失败';
+                        this.showError(err.message || '批量翻译失败');
                         this.restoreSelectionStates();
                     } finally {
                         this.batchTranslation.isRunning = false;
@@ -1383,12 +1403,12 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                         });
 
                         if (response.data.success) {
-                            this.successMessage = '保存成功！已生成 strings.xml 文件并替换代码中的字符串';
+                            this.showSuccess('保存成功！已生成 strings.xml 文件并替换代码中的字符串');
                         } else {
-                            this.error = response.data.error || '保存失败';
+                            this.showError(response.data.error || '保存失败');
                         }
                     } catch (err) {
-                        this.error = err.response?.data?.error || '保存请求失败';
+                        this.showError(err.response?.data?.error || '保存请求失败');
                     } finally {
                         this.loading = false;
                     }
@@ -1399,7 +1419,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                     const selectedUntranslatedStrings = this.untranslatedStrings.filter(str => str.selected);
 
                     if (selectedUntranslatedStrings.length === 0) {
-                        this.error = '请至少选择一个字符串进行忽略';
+                        this.showError('请至少选择一个字符串进行忽略');
                         return;
                     }
 
@@ -1416,10 +1436,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                     // 保存忽略的字符串到localStorage
                     this.saveIgnoredStrings();
                     
-                    this.successMessage = `已忽略 ${selectedUntranslatedStrings.length} 个字符串`;
-                    setTimeout(() => {
-                        this.successMessage = '';
-                    }, 3000);
+                    this.showSuccess(`已忽略 ${selectedUntranslatedStrings.length} 个字符串`);
                 },
 
                 selectAll() {
@@ -1685,10 +1702,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                     this.currentStep = meta.currentStep || 2;
                                     this.updateCounts();
                                     
-                                    this.successMessage = `已恢复 ${allStrings.length} 个字符串的状态`;
-                                    setTimeout(() => {
-                                        this.successMessage = '';
-                                    }, 3000);
+                                this.showSuccess(`已恢复 ${allStrings.length} 个字符串的状态`);
                                     
                                     console.log('字符串状态恢复成功:', allStrings.length);
                                 }
@@ -1707,10 +1721,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                 // 手动保存状态（供用户调用）
                 manualSave() {
                     this.saveCurrentState();
-                    this.successMessage = '状态保存成功！';
-                    setTimeout(() => {
-                        this.successMessage = '';
-                    }, 2000);
+                    this.showSuccess('状态保存成功！');
                 },
 
                 // 清除保存的状态（带确认）
@@ -1729,14 +1740,11 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                             // 清除忽略的字符串
                             this.clearIgnoredStrings();
                             
-                            this.successMessage = '状态清除完成！';
-                            setTimeout(() => {
-                                this.successMessage = '';
-                            }, 2000);
+                            this.showSuccess('状态清除完成！');
                             
                             console.log('状态清除完成');
                         } catch (error) {
-                            this.error = '清除状态失败: ' + error.message;
+                            this.showError('清除状态失败: ' + error.message);
                             console.warn('清除状态失败:', error);
                         }
                     }
