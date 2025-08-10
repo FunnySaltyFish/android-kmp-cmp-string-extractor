@@ -309,6 +309,19 @@
             border-color: #4facfe;
         }
 
+        /* select option */
+        .form-group select option {
+            color: #000;
+            padding: 16px;
+            border: 1px solid #000;
+            border-radius: 6px;
+            font-size: 14px;
+            background: #FFCC80;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 500;
+        }
+
         /* 改进的字符串选择样式 */
         .string-item {
             cursor: pointer;
@@ -708,6 +721,17 @@
                     
                     <div v-show="showAdvanced" class="advanced-content">
                         <div class="form-group">
+                            <label for="configTemplate">配置模板：</label>
+                            <select id="configTemplate" v-model="config.template" @change="applyTemplate">
+                                <option value="kmp_libres">KMP + LibRes（当前）</option>
+                                <option value="cmp_resources">CMP + Resources</option>
+                                <option value="android_pure">纯 Android</option>
+                            </select>
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                选择不同项目类型以快速预填部分字段（XML 路径、扫描范围、替换脚本）。
+                            </small>
+                        </div>
+                        <div class="form-group">
                             <label for="modelName">模型名称：</label>
                             <input 
                                 type="text" 
@@ -791,28 +815,65 @@
                                 id="replacementScript" 
                                 v-model="config.replacementScript" 
                                 rows="8"
-                                placeholder="在此粘贴 Python 脚本：定义 get_replaced_text(res_name: str, args: list[dict]) 与 get_import_statements，用于生成替换表达式与 import 行；args 形如 [{name: string, value: string}]"
+                                placeholder="在此粘贴 Python 脚本：定义 get_replaced_text(res_name: str, args: list[dict], file_path: str) 与 get_import_statements(module_name: str, file_path: str)，用于生成替换表达式与 import 行；args 形如 [{name: string, value: string}]"
                             ></textarea>
                             <small style="color: #666; margin-top: 5px; display: block;">后端会执行该脚本以生成替换表达式和 import 行；仅在本地使用，注意安全。</small>
                             <details style="margin-top:8px;">
                                 <summary>查看脚本示例</summary>
                                 <pre style="margin-top:8px; white-space: pre-wrap; background:#f8f9fa; padding:10px; border:1px solid #e0e0e0; border-radius:4px;">
-# CMP ResStrings 示例（含命名参数）。args: list[dict], 每项形如 {"name": str, "value": str}
-def get_replaced_text(res_name: str, args: list[dict]) -> str:
+# KMP LibRes：XML 使用 ${name}
+def format_xml_text(text: str, args: list[dict]) -> str:
+    if not isinstance(args, list) or not args:
+        return text or ""
+    import re
+    normalized = text or ""
+    for item in args:
+        name = str(item.get("name", "")).strip()
+        value = str(item.get("value", "")).strip()
+        if not name or not value:
+            continue
+        try:
+            normalized = re.sub(re.escape("${" + value + "}"), "${" + name + "}", normalized)
+        except re.error:
+            pass
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value):
+            normalized = re.sub(r"\\$" + re.escape(value) + r"\\b", "$" + name, normalized)
+    return normalized
+
+def get_replaced_text(res_name: str, args: list[dict], file_path: str) -> str:
     if not args:
         return f"ResStrings.{res_name}"
-    formatter = ", ".join([f"{item.get('name')} = ({item.get('value')}).toString()" for item in args])
-    return f"ResStrings.{res_name}.format(" + formatter + ")"
+    parts = []
+    for item in args:
+        name = str(item.get("name", "")).strip() or "arg"
+        value = str(item.get("value", "")).strip() or name
+        parts.append(f"{name} = ({value}).toString()")
+    joined = ", ".join(parts)
+    return f"ResStrings.{res_name}.format({joined})"
 
-def get_import_statements(module_name: str, file_name: str) -> str:
+def get_import_statements(module_name: str, file_path: str) -> str:
     return f"import com.funny.translation.{module_name}.strings.ResString"
 
-# Android R 资源示例（通常无需 import）
-def get_replaced_text(res_name: str, args: list[dict]) -> str:
-    return f"R.string.{res_name}"
+# ---------------------------------------------------------
 
-def get_import_statements(module_name: str, file_name: str) -> str:
-    return ""
+# Android：XML 使用 %s；假设有全局 getString 函数
+def format_xml_text(text: str, args: list[dict]) -> str:
+    if not isinstance(args, list) or not args:
+        return text or ""
+    import re
+    normalized = text or ""
+    normalized = re.sub(r"\\$\\{.*?\\}", "%s", normalized)
+    normalized = re.sub(r"\\$[A-Za-z_][A-Za-z0-9_]*", "%s", normalized)
+    return normalized
+
+def get_replaced_text(res_name: str, args: list[dict], file_path: str) -> str:
+    if not args:
+        return f"getString(R.string.{res_name})"
+    joined = ", ".join([str(item.get("value", "")).strip() for item in args])
+    return f"getString(R.string.{res_name}, {joined})"
+
+def get_import_statements(module_name: str, file_path: str) -> str:
+    return f"import com.funny.translation.{module_name}.R\\nimport com.funny.translation.helper.getString"
                                 </pre>
                             </details>
                         </div>
@@ -993,7 +1054,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                 </div>
 
                 <p style="margin-bottom: 20px; color: #666;">
-                    确认翻译结果无误后，点击保存按钮将生成 strings.xml 文件并替换代码中的字符串。
+                    确认翻译结果以及上述所有配置（包括高级配置）无误后，点击保存按钮将生成 strings.xml 文件并替换代码中的字符串。建议点击前提前备份好项目文件，比如 git commit ，以避免预期之外的修改。
                 </p>
 
                 <button class="btn" @click="saveChanges" :disabled="loading">
@@ -1085,6 +1146,75 @@ def get_import_statements(module_name: str, file_name: str) -> str:
 
 只输出 JSON 数组。`
 
+        // 预置模板脚本片段
+        const TEMPLATE_SCRIPTS = {
+            kmp_libres: ``,
+            cmp_resources: `# CMP Resources：XML 中占位使用 %s
+def format_xml_text(text: str, args: list[dict]) -> str:
+    import re
+    if not isinstance(args, list) or not args:
+        return text or ""
+    normalized = text or ""
+    # 替换花括号占位
+    normalized = re.sub(r"\\$" + "{" + r".*?" + "}", r"%s", normalized)
+    # 替换 $ident
+    normalized = re.sub(r"\\$[A-Za-z_][A-Za-z0-9_]*", r"%s", normalized)
+    return normalized
+
+def get_replaced_text(res_name: str, args: list[dict], file_path: str) -> str:
+    if not args:
+        return f"stringResource(Res.string.{res_name})"
+    joined = ", ".join([str(item.get("value", "")).strip() for item in args])
+    return f"stringResource(Res.string.{res_name}, {joined})"
+
+def get_import_statements(module_name: str, file_path: str) -> str:
+    return f"import composedatasaver.{module_name.lower()}.generated.resources.Res\\nimport org.jetbrains.compose.resources.stringResource"`,
+            
+            android_pure: `# 纯 Android：XML 中占位使用 %s；假设有全局 getString(id:Int, vararg args: Any?)
+def format_xml_text(text: str, args: list[dict]) -> str:
+    import re
+    if not isinstance(args, list) or not args:
+        return text or ""
+    normalized = text or ""
+    normalized = re.sub(r"\\$" + "{" + r".*?" + "}", r"%s", normalized)
+    normalized = re.sub(r"\\$[A-Za-z_][A-Za-z0-9_]*", r"%s", normalized)
+    return normalized
+
+def get_replaced_text(res_name: str, args: list[dict], file_path: str) -> str:
+    if not args:
+        return f"getString(R.string.{res_name})"
+    joined = ", ".join([str(item.get("value", "")).strip() for item in args])
+    return f"getString(R.string.{res_name}, {joined})"
+
+def get_import_statements(module_name: str, file_path: str) -> str:
+    return f"import com.funny.translation.{module_name}.R\\nimport com.funny.translation.helper.getString"`
+        };
+
+        // 配置模板
+        const TEMPLATES = {
+            kmp_libres: {
+                name: 'KMP + LibRes',
+                sourceXmlPath: '{module_name}/src/commonMain/libres/strings/strings_zh.xml',
+                targetXmlPath: '{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml',
+                extractionGlobs: '**/*.kt, **/*.kts',
+                replacementScript: TEMPLATE_SCRIPTS.kmp_libres
+            },
+            cmp_resources: {
+                name: 'CMP + Resources',
+                sourceXmlPath: '{module_name}/src/commonMain/composeResources/values/strings.xml',
+                targetXmlPath: '{module_name}/src/commonMain/composeResources/values-{target_language}/strings.xml',
+                extractionGlobs: '**/*.kt, **/*.kts',
+                replacementScript: TEMPLATE_SCRIPTS.cmp_resources
+            },
+            android_pure: {
+                name: '纯 Android',
+                sourceXmlPath: '{module_name}/src/main/res/values/strings.xml',
+                targetXmlPath: '{module_name}/src/main/res/values-{target_language}/strings.xml',
+                extractionGlobs: '**/*.kt, **/*.kts',
+                replacementScript: TEMPLATE_SCRIPTS.android_pure
+            }
+        };
+
         createApp({
             data() {
                 return {
@@ -1105,7 +1235,8 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                         targetLanguage: 'en',
                         targetXmlPath: '{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml',
                         extractionGlobs: '',
-                        replacementScript: ''
+                        replacementScript: '',
+                        template: 'kmp_libres'
                     },
                     strings: [],
                     selectedCount: 0,
@@ -1192,6 +1323,19 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                 }, 30000); // 每30秒保存一次
             },
             methods: {
+                applyTemplate() {
+                    const tplKey = this.config.template;
+                    const tpl = TEMPLATES[tplKey];
+                    if (!tpl) {
+                        this.showError(`找不到模板：${tplKey}`)
+                        return
+                    };
+                    this.config.sourceXmlPath = tpl.sourceXmlPath;
+                    this.config.targetXmlPath = tpl.targetXmlPath;
+                    this.config.extractionGlobs = tpl.extractionGlobs;
+                    this.config.replacementScript = tpl.replacementScript;
+                    this.showSuccess(`已应用模板：${tpl.name}`);
+                },
                 // 统一 Toast 方法
                 showSuccess(message) {
                     Toastify({
@@ -1741,7 +1885,8 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                 targetLanguage: config.targetLanguage || this.config.targetLanguage,
                                 targetXmlPath: config.targetXmlPath || this.config.targetXmlPath,
                                 extractionGlobs: config.extractionGlobs || this.config.extractionGlobs,
-                                replacementScript: config.replacementScript || this.config.replacementScript
+                                replacementScript: config.replacementScript || this.config.replacementScript,
+                                template: config.template || this.config.template
                             };
                         }
 

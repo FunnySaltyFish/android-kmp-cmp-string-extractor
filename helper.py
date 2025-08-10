@@ -376,7 +376,7 @@ class StringReplacer:
     def __init__(self, project_root: str, replacement_script: str = ""):
         self.project_root = Path(project_root)
         # 解析用户脚本，提供两个可选钩子：get_replaced_text 与 get_import_statements
-        self._get_replaced_text, self._get_import_statements = self._load_replacement_script(replacement_script)
+        self._get_replaced_text, self._get_import_statements, self._format_xml_text = self._load_replacement_script(replacement_script)
 
     def generate_strings_xml_with_template(
         self,
@@ -451,9 +451,17 @@ class StringReplacer:
                     elem = LET.SubElement(root, "string")
                     elem.set("name", s.resource_name)
                     base_text = s.translation if lang != "zh" else s.text
-                    # 用 args 的 name 统一占位符（将 ${value}/$value 规范化为 ${name}/$name）
+                    # 通过脚本指定 XML 中占位符格式（LibRes 默认 ${name}；其他模板可定义为 %s 等）
                     if isinstance(s.args, list) and s.args:
-                        base_text = self._normalize_placeholders(base_text or "", s.args)
+                        try:
+                            pre_text = base_text
+                            base_text = self._format_xml_text(base_text or "", s.args)
+                            print(f"format [{pre_text}] with args {s.args} -> {base_text}")
+                        except Exception:
+                            print("执行自定义 format_xml_text 失败。回退到默认实现")
+                            print_exc()
+                            # 回退到旧的标准化行为
+                            base_text = self._normalize_placeholders(base_text or "", s.args)
                     elem.text = base_text
                     # 最后一个元素 tail 仅为换行，避免 </resources> 前出现多余空格
                     elem.tail = "\n" if idx == len(to_append) - 1 else "\n    "
@@ -528,7 +536,7 @@ class StringReplacer:
 
                 # 通过用户脚本生成替换表达式（Kotlin 代码片段）
                 try:
-                    replaced_expr = self._get_replaced_text(s.resource_name, args_list)
+                    replaced_expr = self._get_replaced_text(s.resource_name, args_list, file_path.absolute().as_posix())
                 except Exception:
                     # 回退策略
                     replaced_expr = f"ResStrings.{s.resource_name}"
@@ -547,7 +555,7 @@ class StringReplacer:
             # 如果有替换，尝试插入 import（仅一次）
             if any_replaced:
                 try:
-                    import_line = self._get_import_statements(module_name, file_path.name)
+                    import_line = self._get_import_statements(module_name, file_path.absolute().as_posix())
                 except Exception:
                     import_line = ""
 
@@ -567,14 +575,18 @@ class StringReplacer:
     def _load_replacement_script(
         self,
         script: str
-    ) -> tuple[Callable[[str, List[Dict[str, str]]], str], Callable[[str, str], str]]:
+    ) -> tuple[
+        Callable[[str, List[Dict[str, str]], str], str],
+        Callable[[str, str], str],
+        Callable[[str, List[Dict[str, str]]], str]
+    ]:
         """
         加载用户提供的 Python 脚本，导出：
-          - get_replaced_text(res_name: str, args: list[dict]) -> str
-          - get_import_statements(module_name: str, file_name: str) -> str
+          - get_replaced_text(res_name: str, args: list[dict], file_path: str) -> str
+          - get_import_statements(module_name: str, file_path: str) -> str
         若未提供或解析失败，提供安全的默认实现。
         """
-        def _default_get_replaced_text(res_name: str, args: List[Dict[str, str]]) -> str:
+        def _default_get_replaced_text(res_name: str, args: List[Dict[str, str]], file_path: str) -> str:
             if not args:
                 return f"ResStrings.{res_name}"
             # 按 Kotlin 命名参数形式拼接：name = (value).toString()
@@ -586,34 +598,56 @@ class StringReplacer:
             joined = ", ".join(parts)
             return f"ResStrings.{res_name}.format({joined})"
 
-        def _default_get_import_statements(module_name: str, file_name: str) -> str:
+        def _default_get_import_statements(module_name: str, file_path: str) -> str:
             return f"import com.funny.translation.{module_name}.strings.ResString"
 
+        def _default_format_xml_text(text: str, args: List[Dict[str, str]]) -> str:
+            """默认用于 LibRes：将占位统一为 ${name} 形式。
+            - 支持 ${expr} 与 $ident 两种占位，统一替换为 ${name}
+            - 基于 args 中的 name/value 进行标准化
+            """
+            if not isinstance(args, list) or not args:
+                return text or ""
+            return self._normalize_placeholders(text or "", args)
+
         if not script or not script.strip():
-            return _default_get_replaced_text, _default_get_import_statements
+            return _default_get_replaced_text, _default_get_import_statements, _default_format_xml_text
+
+        def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+            # 仅允许导入正则模块 re
+            if name == 're':
+                return re
+            raise ImportError(f"不允许导入模块: {name}")
 
         safe_builtins = {
             'str': str, 'dict': dict, 'list': list, 'len': len, 'min': min, 'max': max,
-            'enumerate': enumerate, 'sorted': sorted, 'range': range
+            'enumerate': enumerate, 'sorted': sorted, 'range': range, "isinstance": isinstance,
+            "int": int, "float": float,
+            '__import__': _safe_import,
         }
         local_vars: Dict[str, object] = {}
         try:
+            print("传入的用户脚本：")
+            print(script)
             exec(  # nosec - 用户受信输入，建议仅在本地开发环境使用
                 script,
-                {'__builtins__': safe_builtins},
+                {'__builtins__': safe_builtins, 're': re},
                 local_vars
             )
             get_replaced = local_vars.get('get_replaced_text') or _default_get_replaced_text
             get_imports = local_vars.get('get_import_statements') or _default_get_import_statements
+            format_xml = local_vars.get('format_xml_text') or _default_format_xml_text
             # 简单校验可调用
             if not callable(get_replaced):
                 get_replaced = _default_get_replaced_text
             if not callable(get_imports):
                 get_imports = _default_get_import_statements
-            return get_replaced, get_imports
+            if not callable(format_xml):
+                format_xml = _default_format_xml_text
+            return get_replaced, get_imports, format_xml
         except Exception as e:
             print(f"解析替换脚本失败，使用默认实现: {e}")
-            return _default_get_replaced_text, _default_get_import_statements
+            return _default_get_replaced_text, _default_get_import_statements, _default_format_xml_text
 
     def _insert_import_once(self, content: str, import_line: str) -> str:
         """将 import_line 插入到 Kotlin 文件中：
