@@ -59,13 +59,14 @@ def extract_strings():
     
     data = request.json
     project_path = data.get('project_path', '')
+    extraction_globs = data.get('extraction_globs') or []
     
     if not project_path:
         return jsonify({'error': '请提供项目路径'}), 400
     
     try:
         extractor = ChineseStringExtractor(project_path)
-        current_strings = extractor.extract_all_strings()
+        current_strings = extractor.extract_all_strings(extraction_globs or None)
         
         return jsonify({
             'success': True,
@@ -252,7 +253,7 @@ def extract_references():
     project_path = data.get('project_path', '')
     source_xml_path = data.get('source_xml_path', '{module_name}/src/commonMain/libres/strings/strings_zh.xml')
     target_language = data.get('target_language', 'en')
-    target_xml_path = data.get('target_xml_path', '{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml')
+    target_xml_path = data.get('target_xml_path', '{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml')
     limit = data.get('limit', 10)
     
     if not project_path:
@@ -285,6 +286,9 @@ def save_changes():
     data = request.json
     updated_strings = data.get('strings', [])
     ignored_strings = data.get('ignored_strings', [])
+    target_xml_path_template = data.get('target_xml_path_template')
+    target_language = data.get('target_language', 'en')
+    replacement_script = data.get('replacement_script', '')
     
     try:
         # 更新字符串信息
@@ -303,7 +307,7 @@ def save_changes():
         
         # 按模块分组字符串
         modules = {}
-        replacer = StringReplacer(extractor.project_root)
+        replacer = StringReplacer(extractor.project_root, replacement_script=replacement_script)
         
         for s in current_strings:
             if not s.resource_name or not s.translation:
@@ -320,16 +324,24 @@ def save_changes():
         # 生成XML文件和执行替换
         for module_name, strings in modules.items():
             module_path = extractor.project_root / module_name
-            
-            # 生成中文strings.xml
-            replacer.generate_strings_xml(module_path, strings, "zh")
-            # 生成英文strings.xml  
-            replacer.generate_strings_xml(module_path, strings, "en")
-            
-            # 执行字符串替换
+
+            # 根据模板生成中文/目标语言 XML
+            replacer.generate_strings_xml_with_template(
+                module_name, strings, "zh", target_xml_path_template.replace('{target_language}', 'zh') if target_xml_path_template else None
+            )
+            replacer.generate_strings_xml_with_template(
+                module_name, strings, target_language, target_xml_path_template
+            )
+
+            # 执行高级替换（带脚本与 import 插入）
+            # 按文件聚合，减少重复读写
+            file_to_strings: dict[str, list] = {}
             for s in strings:
-                file_path = extractor.project_root / s.file_path
-                replacer.replace_strings_in_file(file_path, {s.text: s.resource_name})
+                file_to_strings.setdefault(s.file_path, []).append(s)
+
+            for rel_path, strs in file_to_strings.items():
+                file_path = extractor.project_root / rel_path
+                replacer.replace_strings_in_file_advanced(file_path, strs, module_name)
         
         return jsonify({'success': True, 'message': '保存成功'})
         

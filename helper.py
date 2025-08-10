@@ -6,11 +6,12 @@
 import re
 import json
 from pathlib import Path
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional, Callable
 from dataclasses import dataclass
 import openai
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
+from traceback import print_exc
 
 @dataclass
 class ChineseString:
@@ -23,7 +24,7 @@ class ChineseString:
     translation: str = ""  # 英文翻译
     selected: bool = True  # 是否选中进行翻译
     is_format_string: bool = False  # 是否包含格式化参数
-    format_params: List[str] = None  # 格式化参数列表
+    format_params: List[str] = None  # 格式化参数名称列表（如 ["count", "name"]）
     module_name: str = ""  # 模块名
 
     def __post_init__(self):
@@ -168,18 +169,39 @@ class ChineseStringExtractor:
 
     def extract_format_params(self, text: str) -> List[str]:
         """提取格式化参数 {param}"""
-        return re.findall(r'\{(\w+)\}', text)
+        # 支持 Kotlin 字符串中的 ${name} 或 $name 两种形式
+        pattern = re.compile(r"\$\{(.+?)\}|\$(\w+)")
+        raw_matches = pattern.findall(text)
+        # findall 对于两个捕获组会返回 (group1, group2) 的元组列表，这里标准化为纯参数名列表
+        names: List[str] = []
+        for g1, g2 in raw_matches:
+            name = g1 or g2
+            if name:
+                names.append(name)
+        return names
 
-    def extract_all_strings(self) -> List[ChineseString]:
-        """提取项目中所有的中文字符串"""
+    def extract_all_strings(self, extraction_globs: Optional[List[str]] = None) -> List[ChineseString]:
+        """提取项目中所有的中文字符串
+        
+        Args:
+            extraction_globs: 自定义扫描模式列表（glob），如 ["**/*.kt", "**/*.kts"]。
+                若不提供，则默认扫描所有 Kotlin 源文件（**/*.kt）。
+        """
         all_strings = []
         
-        # 扫描所有Kotlin文件
-        for kt_file in self.project_root.rglob("**/*.kt"):
-            if "build" in str(kt_file) or ".gradle" in str(kt_file):
-                continue
-            strings = self.extract_strings_from_file(kt_file)
-            all_strings.extend(strings)
+        # 默认扫描 *.kt 文件
+        globs = extraction_globs if extraction_globs else ["**/*.kt"]
+        visited: Set[Path] = set()
+        for pattern in globs:
+            for kt_file in self.project_root.rglob(pattern):
+                if kt_file in visited:
+                    continue
+                visited.add(kt_file)
+                # 排除常见构建目录
+                if any(part in {"build", ".gradle", "node_modules"} for part in kt_file.parts):
+                    continue
+                strings = self.extract_strings_from_file(kt_file)
+                all_strings.extend(strings)
         
         # 去重（基于unique_id，即模块名和文本内容）
         unique_strings = {}
@@ -218,7 +240,7 @@ class ChineseStringExtractor:
         Args:
             source_xml_path: 源XML文件路径模板，如 "{module_name}/src/commonMain/libres/strings/strings_zh.xml"
             target_language: 目标语言代码，如 "en"
-            target_xml_path: 目标XML文件路径模板，如 "{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml"
+            target_xml_path: 目标XML文件路径模板，如 "{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml"
             limit: 最大提取数量
             
         Returns:
@@ -229,14 +251,22 @@ class ChineseStringExtractor:
         try:
             # 扫描所有模块
             for module_dir in self.project_root.iterdir():
+                
+
                 if not module_dir.is_dir() or module_dir.name.startswith('.'):
                     continue
+
+                # 包含编译的路径跳过
+                if any(part in {"build", ".gradle", "node_modules"} for part in module_dir.parts):
+                    continue
+
+                print("当前扫描目录：", module_dir)
                 
                 # 构建实际的XML文件路径
                 source_path = self.project_root / source_xml_path.format(module_name=module_dir.name)
                 target_path = self.project_root / target_xml_path.format(
                     module_name=module_dir.name, 
-                    target_lang=target_language
+                    target_language=target_language
                 )
                 
                 # 检查文件是否存在
@@ -269,6 +299,7 @@ class ChineseStringExtractor:
                     break
                     
         except Exception as e:
+            print_exc()
             print(f"提取参考翻译时出错: {e}")
         
         return references
@@ -332,94 +363,222 @@ class TranslationService:
 class StringReplacer:
     """字符串替换器"""
     
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str, replacement_script: str = ""):
         self.project_root = Path(project_root)
+        # 解析用户脚本，提供两个可选钩子：get_replaced_text 与 get_import_statements
+        self._get_replaced_text, self._get_import_statements = self._load_replacement_script(replacement_script)
 
-    def replace_strings_in_file(self, file_path: Path, replacements: Dict[str, str]) -> bool:
-        """在文件中替换字符串"""
+    def generate_strings_xml_with_template(
+        self,
+        module_name: str,
+        strings: List[ChineseString],
+        lang: str,
+        xml_path_template: Optional[str]
+    ) -> bool:
+        """
+        使用用户提供的模板生成 strings XML。
+        - xml_path_template 示例："{module_name}/src/commonMain/libres/strings/strings_{lang}.xml"
+        - 支持占位符：{module_name}、{lang}、{target_language}（与 {lang} 等价）
+        """
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            original_content = content
-            
-            # 执行替换
-            for old_text, new_text in replacements.items():
-                # 精确匹配字符串字面量
-                patterns = [
-                    f'"{re.escape(old_text)}"',
-                    f"'{re.escape(old_text)}'"
-                ]
-                
-                for pattern in patterns:
-                    content = re.sub(pattern, f'ResStrings.{new_text}', content)
-            
-            # 只有内容改变时才写入
-            if content != original_content:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                return True
-                
-        except Exception as e:
-            print(f"替换文件 {file_path} 失败: {e}")
-            return False
-        
-        return False
+            if not xml_path_template:
+                # 回退到默认路径逻辑
+                print("请输入合法的 xml_path_template")
+                return False
 
-    def generate_strings_xml(self, module_path: Path, strings: List[ChineseString], lang: str = "zh") -> bool:
-        """生成strings.xml文件"""
-        strings_dir = module_path / "src" / "commonMain" / "libres" / "strings"
-        strings_dir.mkdir(parents=True, exist_ok=True)
-        
-        xml_file = strings_dir / f"strings_{lang}.xml"
-        
-        # 创建XML文档
-        root = ET.Element("resources")
-        
-        # 加载现有的strings（如果存在）
-        existing_strings = {}
-        if xml_file.exists():
-            try:
-                tree = ET.parse(xml_file)
-                existing_root = tree.getroot()
-                for string_elem in existing_root.findall("string"):
-                    name = string_elem.get("name")
-                    text = string_elem.text or ""
-                    if name:
-                        existing_strings[name] = text
-            except ET.ParseError:
-                pass
-        
-        # 添加现有字符串
-        for name, text in existing_strings.items():
-            string_elem = ET.SubElement(root, "string")
-            string_elem.set("name", name)
-            string_elem.text = text
-        
-        # 添加新字符串
-        for s in strings:
-            if s.resource_name and s.resource_name not in existing_strings:
+            # 解析模板
+            relative = xml_path_template.format(module_name=module_name, lang=lang, target_language=lang)
+            xml_file = (self.project_root / relative).resolve()
+            xml_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # 加载现有字符串（如存在则保留）
+            existing_strings: Dict[str, str] = {}
+            if xml_file.exists():
+                try:
+                    tree = ET.parse(xml_file)
+                    existing_root = tree.getroot()
+                    for string_elem in existing_root.findall("string"):
+                        name = string_elem.get("name")
+                        text = string_elem.text or ""
+                        if name:
+                            existing_strings[name] = text
+                except ET.ParseError:
+                    pass
+
+            # 组装 XML
+            root = ET.Element("resources")
+            # 先写入已存在的条目，保证稳定顺序
+            for name, text in existing_strings.items():
                 string_elem = ET.SubElement(root, "string")
-                string_elem.set("name", s.resource_name)
-                text = s.translation if lang == "en" else s.text
+                string_elem.set("name", name)
                 string_elem.text = text
-        
-        # 格式化并保存XML
-        rough_string = ET.tostring(root, 'utf-8')
-        reparsed = minidom.parseString(rough_string)
-        pretty_xml = reparsed.toprettyxml(indent="    ", encoding='utf-8').decode('utf-8')
-        
-        # 移除空行
-        lines = [line for line in pretty_xml.split('\n') if line.strip()]
-        pretty_xml = '\n'.join(lines)
-        
-        try:
+
+            # 再写入新条目（避免覆盖已有项）
+            for s in strings:
+                if s.resource_name and s.resource_name not in existing_strings:
+                    elem = ET.SubElement(root, "string")
+                    elem.set("name", s.resource_name)
+                    elem.text = s.translation if lang != "zh" else s.text
+
+            rough_string = ET.tostring(root, 'utf-8')
+            reparsed = minidom.parseString(rough_string)
+            pretty_xml = reparsed.toprettyxml(indent="    ", encoding='utf-8').decode('utf-8')
+            lines = [line for line in pretty_xml.split('\n') if line.strip()]
+            pretty_xml = '\n'.join(lines)
+
             with open(xml_file, 'w', encoding='utf-8') as f:
                 f.write(pretty_xml)
             return True
         except Exception as e:
-            print(f"生成XML文件失败: {e}")
+            print(f"生成模板 XML 文件失败: {e}")
             return False
+
+    def replace_strings_in_file_advanced(
+        self,
+        file_path: Path,
+        strings: List[ChineseString],
+        module_name: str
+    ) -> bool:
+        """
+        高级替换：使用用户脚本生成替换文本，并按需插入 import（同文件只插入一次）。
+        - strings: 列表中的每项需包含 text（原文）、resource_name（目标资源名）、format_params（参数名列表）。
+        - module_name: 当前模块名，用于 import 生成。
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            original_content = content
+            any_replaced = False
+
+            # 逐条构造替换
+            for s in strings:
+                if not s.resource_name:
+                    continue
+                # 根据格式化参数构造 args（假设变量名与参数名一致）
+                args_map: Dict[str, str] = {}
+                if s.format_params:
+                    for name in s.format_params:
+                        if isinstance(name, (list, tuple)) and len(name) == 2:
+                            # 兼容旧格式返回的 (g1, g2)
+                            pname = name[0] or name[1]
+                        else:
+                            pname = name
+                        if pname:
+                            args_map[str(pname)] = str(pname)
+
+                # 通过用户脚本生成替换表达式（Kotlin 代码片段）
+                try:
+                    replaced_expr = self._get_replaced_text(s.resource_name, args_map)
+                except Exception:
+                    # 回退策略
+                    replaced_expr = f"ResStrings.{s.resource_name}"
+
+                # 精确匹配原始文本字面量（单双引号）
+                literal_patterns = [
+                    f'"{re.escape(s.text)}"',
+                    f"'{re.escape(s.text)}'",
+                ]
+                for patt in literal_patterns:
+                    new_content, num = re.subn(patt, replaced_expr, content)
+                    if num > 0:
+                        content = new_content
+                        any_replaced = True
+
+            # 如果有替换，尝试插入 import（仅一次）
+            if any_replaced:
+                try:
+                    import_line = self._get_import_statements(module_name, file_path.name)
+                except Exception:
+                    import_line = ""
+
+                if import_line and import_line not in content:
+                    content = self._insert_import_once(content, import_line)
+
+            if content != original_content:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                return True
+            return False
+        except Exception as e:
+            print(f"高级替换失败 {file_path}: {e}")
+            return False
+
+    # -------------------- 内部工具 --------------------
+    def _load_replacement_script(
+        self,
+        script: str
+    ) -> tuple[Callable[[str, Dict[str, str]], str], Callable[[str, str], str]]:
+        """
+        加载用户提供的 Python 脚本，导出：
+          - get_replaced_text(res_name: str, args: dict[str, str]) -> str
+          - get_import_statements(module_name: str, file_name: str) -> str
+        若未提供或解析失败，提供安全的默认实现。
+        """
+        def _default_get_replaced_text(res_name: str, args: Dict[str, str]) -> str:
+            if not args:
+                return f"ResStrings.{res_name}"
+            # 默认按照 Kotlin named args 的形式拼接
+            joined = ", ".join([f"{k} = ({v}).toString()" for k, v in args.items()])
+            return f"ResStrings.{res_name}.format({joined})"
+
+        def _default_get_import_statements(module_name: str, file_name: str) -> str:
+            return f"import com.funny.translation.{module_name}.strings.ResString"
+
+        if not script or not script.strip():
+            return _default_get_replaced_text, _default_get_import_statements
+
+        safe_builtins = {
+            'str': str, 'dict': dict, 'list': list, 'len': len, 'min': min, 'max': max,
+            'enumerate': enumerate, 'sorted': sorted, 'range': range
+        }
+        local_vars: Dict[str, object] = {}
+        try:
+            exec(  # nosec - 用户受信输入，建议仅在本地开发环境使用
+                script,
+                {'__builtins__': safe_builtins},
+                local_vars
+            )
+            get_replaced = local_vars.get('get_replaced_text') or _default_get_replaced_text
+            get_imports = local_vars.get('get_import_statements') or _default_get_import_statements
+            # 简单校验可调用
+            if not callable(get_replaced):
+                get_replaced = _default_get_replaced_text
+            if not callable(get_imports):
+                get_imports = _default_get_import_statements
+            return get_replaced, get_imports
+        except Exception as e:
+            print(f"解析替换脚本失败，使用默认实现: {e}")
+            return _default_get_replaced_text, _default_get_import_statements
+
+    def _insert_import_once(self, content: str, import_line: str) -> str:
+        """将 import_line 插入到 Kotlin 文件中：
+        - 若已存在相同 import，则不重复插入
+        - 优先插在 package 与现有 import 之后；否则插在文件顶部
+        """
+        if not import_line.endswith('\n'):
+            import_line = import_line + '\n'
+
+        if import_line.strip() in content:
+            return content
+
+        lines = content.split('\n')
+        package_index = -1
+        last_import_index = -1
+        for idx, line in enumerate(lines):
+            if package_index == -1 and line.strip().startswith('package '):
+                package_index = idx
+            elif line.strip().startswith('import '):
+                last_import_index = idx
+
+        insert_at = 0
+        if last_import_index >= 0:
+            insert_at = last_import_index + 1
+        elif package_index >= 0:
+            insert_at = package_index + 1
+
+        lines.insert(insert_at, import_line.rstrip('\n'))
+        return '\n'.join(lines)
 
 def _parse_strings_xml(xml_path: Path) -> dict[str, str]:
     """解析 strings_*.xml，返回 name->text 映射。不存在返回空。"""

@@ -44,13 +44,13 @@ def test_config_validation():
             "name": "默认配置",
             "source_xml_path": "{module_name}/src/commonMain/libres/strings/strings_zh.xml",
             "target_language": "en",
-            "target_xml_path": "{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml"
+            "target_xml_path": "{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml"
         },
         {
             "name": "自定义配置",
             "source_xml_path": "{module_name}/src/libres/strings_zh.xml",
             "target_language": "ja",
-            "target_xml_path": "{module_name}/src/libres/strings_{target_lang}.xml"
+            "target_xml_path": "{module_name}/src/libres/strings_{target_language}.xml"
         }
     ]
     
@@ -65,7 +65,7 @@ def test_config_validation():
         source_path = config['source_xml_path'].format(module_name=module_name)
         target_path = config['target_xml_path'].format(
             module_name=module_name,
-            target_lang=config['target_language']
+            target_language=config['target_language']
         )
         
         print(f"  实际源文件路径: {source_path}")

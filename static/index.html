@@ -749,11 +749,56 @@
                                 type="text" 
                                 id="targetXmlPath" 
                                 v-model="config.targetXmlPath" 
-                                placeholder="例如: {module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml"
+                                placeholder="例如: {module_name}/src/commonMain/libres/strings/strings_{target_language}.xml"
                             >
                             <small style="color: #666; margin-top: 5px; display: block;">
-                                使用 {module_name} 和 {target_lang} 作为占位符
+                                使用 {module_name} 和 {target_language} 作为占位符
                             </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="extractionGlobs">扫描文件匹配模式（逗号分隔）：</label>
+                            <input 
+                                type="text" 
+                                id="extractionGlobs" 
+                                v-model="config.extractionGlobs" 
+                                placeholder="例如: **/*.kt, **/*.kts"
+                            >
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                自定义扫描范围，多个模式用逗号分隔；为空则使用默认 **/*.kt
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="replacementScript">自定义替换脚本（Python）：</label>
+                            <textarea 
+                                id="replacementScript" 
+                                v-model="config.replacementScript" 
+                                rows="8"
+                                placeholder="在此粘贴 Python 脚本：定义 get_replaced_text 和 get_import_statements，用于生成替换表达式与 import 行"
+                            ></textarea>
+                            <small style="color: #666; margin-top: 5px; display: block;">后端会执行该脚本以生成替换表达式和 import 行；仅在本地使用，注意安全。</small>
+                            <details style="margin-top:8px;">
+                                <summary>查看脚本示例</summary>
+                                <pre style="margin-top:8px; white-space: pre-wrap; background:#f8f9fa; padding:10px; border:1px solid #e0e0e0; border-radius:4px;">
+# CMP ResStrings 示例（含命名参数）
+def get_replaced_text(res_name: str, args: dict[str, str]) -> str:
+    if len(args) == 0:
+        return f"ResStrings.{res_name}"
+    formatter = ", ".join([f"{k} = {v}.toString()" for k, v in args.items()])
+    return f"ResStrings.{res_name}.format(" + formatter + ")"
+
+def get_import_statements(module_name: str, file_name: str) -> str:
+    return f"import com.funny.translation.{module_name}.strings.ResString"
+
+# Android R 资源示例
+def get_replaced_text(res_name: str, args: dict[str, str]) -> str:
+    return f"R.string.{res_name}"
+
+def get_import_statements(module_name: str, file_name: str) -> str:
+    return ""
+                                </pre>
+                            </details>
                         </div>
 
                          <div class="form-group">
@@ -1032,7 +1077,9 @@
                         referenceTranslations: '',
                         sourceXmlPath: '{module_name}/src/commonMain/libres/strings/strings_zh.xml',
                         targetLanguage: 'en',
-                        targetXmlPath: '{module_name}/src/commonMain/libres/strings/strings_{target_lang}.xml'
+                        targetXmlPath: '{module_name}/src/commonMain/libres/strings/strings_{target_language}.xml',
+                        extractionGlobs: '',
+                        replacementScript: ''
                     },
                     strings: [],
                     selectedCount: 0,
@@ -1103,6 +1150,13 @@
                 }, 30000); // 每30秒保存一次
             },
             methods: {
+                parseGlobs(globsText) {
+                    if (!globsText) return [];
+                    return globsText
+                        .split(',')
+                        .map(s => s.trim())
+                        .filter(s => s.length > 0);
+                },
                 async extractStrings() {
                     if (!this.config.projectPath.trim()) {
                         this.error = '请输入项目路径';
@@ -1115,7 +1169,8 @@
 
                     try {
                         const response = await axios.post('/api/extract', {
-                            project_path: this.config.projectPath
+                            project_path: this.config.projectPath,
+                            extraction_globs: this.parseGlobs(this.config.extractionGlobs)
                         });
 
                         if (response.data.success) {
@@ -1235,8 +1290,20 @@
                                             updatedStr.selected = originalSelected;
                                         }
                                     });
+
+                                    // 翻译回写时，前端再次过滤已忽略的字符串，且为未记录过选择状态的条目默认设为未选中
+                                    const filteredUpdatedStrings = updatedStrings
+                                        .filter(s => !this.ignoredStrings.has(s.text))
+                                        .map(s => {
+                                            if (this.lastSelectedStates.has(s.unique_id)) {
+                                                s.selected = this.lastSelectedStates.get(s.unique_id);
+                                            } else if (s.selected === undefined) {
+                                                s.selected = false;
+                                            }
+                                            return s;
+                                        });
                                     
-                                    this.strings = updatedStrings;
+                                    this.strings = filteredUpdatedStrings;
                                     this.batchTranslation.completedCount += response.data.updated_count;
                                     
                                     // 检查是否有部分错误
@@ -1309,7 +1376,10 @@
                     try {
                         const response = await axios.post('/api/save', {
                             strings: this.strings,
-                            ignored_strings: []
+                            ignored_strings: [],
+                            target_xml_path_template: this.config.targetXmlPath,
+                            target_language: this.config.targetLanguage,
+                            replacement_script: this.config.replacementScript
                         });
 
                         if (response.data.success) {
@@ -1567,7 +1637,9 @@
                                 apiKey: config.apiKey || this.config.apiKey,
                                 sourceXmlPath: config.sourceXmlPath || this.config.sourceXmlPath,
                                 targetLanguage: config.targetLanguage || this.config.targetLanguage,
-                                targetXmlPath: config.targetXmlPath || this.config.targetXmlPath
+                                targetXmlPath: config.targetXmlPath || this.config.targetXmlPath,
+                                extractionGlobs: config.extractionGlobs || this.config.extractionGlobs,
+                                replacementScript: config.replacementScript || this.config.replacementScript
                             };
                         }
 
