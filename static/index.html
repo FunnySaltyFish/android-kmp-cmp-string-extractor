@@ -191,7 +191,7 @@
             background: #f0f0f0;
             padding: 4px 8px;
             border-radius: 4px;
-            max-width: 200px;
+            max-width: 50vw;
             overflow-x: auto;
             white-space: nowrap;
             font-family: 'Courier New', monospace;
@@ -626,8 +626,10 @@
 <body>
     <div id="app" class="container">
         <div class="header">
-            <h1>🌐 Transtation 字符串国际化工具</h1>
-            <p>自动提取、翻译和替换 Kotlin 项目中的中文字符串</p>
+            <h1>🌐 Android/CMP 项目字符串国际化工具</h1>
+            <p>自动提取、翻译和替换 Android/CMP 项目中的中文字符串 | By 
+                <a href="https://web.funnysaltyfish.fun/?source=string_extractor" style="color: #fff; text-decoration: none;">FunnySaltyFish</a>  and 
+                <a href="https://cursor.com/" style="color: #fff; text-decoration: none;">Cursor</a> with ❤️</p>
         </div>
 
         <div class="main-content">
@@ -666,6 +668,9 @@
                         v-model="config.baseUrl" 
                         placeholder="例如: https://api.openai.com/v1"
                     >
+                    <small style="color: #666;">
+                        任何与 OpenAI API 兼容的站点均可
+                    </small>
                 </div>
 
                 <!-- 高级配置区域 -->
