@@ -9,8 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Set, Optional, Callable
 from dataclasses import dataclass
 import openai
-from xml.etree import ElementTree as ET
-from xml.dom import minidom
+from lxml import etree as LET
 from traceback import print_exc
 
 @dataclass
@@ -89,14 +88,14 @@ class ChineseStringExtractor:
             if strings_dir.is_dir():
                 for lang_file in strings_dir.glob("strings_*.xml"):
                     try:
-                        tree = ET.parse(lang_file)
+                        tree = LET.parse(str(lang_file))
                         root = tree.getroot()
                         for string_elem in root.findall("string"):
                             name = string_elem.get("name")
                             text = string_elem.text or ""
                             if name and self.contains_chinese(text):
                                 resources[text] = f"ResStrings.{name}"
-                    except ET.ParseError:
+                    except LET.XMLSyntaxError:
                         continue
         
         return resources
@@ -391,43 +390,39 @@ class StringReplacer:
             xml_file = (self.project_root / relative).resolve()
             xml_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # 加载现有字符串（如存在则保留）
-            existing_strings: Dict[str, str] = {}
+            # 加载现有 XML，尽量保留原有注释与结构
+            existing_names: Dict[str, str] = {}
             if xml_file.exists():
                 try:
-                    tree = ET.parse(xml_file)
-                    existing_root = tree.getroot()
-                    for string_elem in existing_root.findall("string"):
+                    tree = LET.parse(str(xml_file))
+                    root = tree.getroot()
+                    for string_elem in root.findall("string"):
                         name = string_elem.get("name")
                         text = string_elem.text or ""
                         if name:
-                            existing_strings[name] = text
-                except ET.ParseError:
-                    pass
+                            existing_names[name] = text
+                except LET.XMLSyntaxError:
+                    # 如果旧文件解析失败，则新建
+                    root = LET.Element("resources")
+                    tree = LET.ElementTree(root)
+            else:
+                root = LET.Element("resources")
+                tree = LET.ElementTree(root)
 
-            # 组装 XML
-            root = ET.Element("resources")
-            # 先写入已存在的条目，保证稳定顺序
-            for name, text in existing_strings.items():
-                string_elem = ET.SubElement(root, "string")
-                string_elem.set("name", name)
-                string_elem.text = text
-
-            # 再写入新条目（避免覆盖已有项）
+            # 仅追加新增项，避免覆盖与删除，最大化保持原有结构/注释
             for s in strings:
-                if s.resource_name and s.resource_name not in existing_strings:
-                    elem = ET.SubElement(root, "string")
+                if s.resource_name and s.resource_name not in existing_names:
+                    elem = LET.SubElement(root, "string")
                     elem.set("name", s.resource_name)
                     elem.text = s.translation if lang != "zh" else s.text
 
-            rough_string = ET.tostring(root, 'utf-8')
-            reparsed = minidom.parseString(rough_string)
-            pretty_xml = reparsed.toprettyxml(indent="    ", encoding='utf-8').decode('utf-8')
-            lines = [line for line in pretty_xml.split('\n') if line.strip()]
-            pretty_xml = '\n'.join(lines)
-
-            with open(xml_file, 'w', encoding='utf-8') as f:
-                f.write(pretty_xml)
+            # 保存，保留注释，带 XML 声明
+            tree.write(
+                str(xml_file),
+                encoding="utf-8",
+                xml_declaration=True,
+                pretty_print=True
+            )
             return True
         except Exception as e:
             print(f"生成模板 XML 文件失败: {e}")
@@ -585,7 +580,7 @@ def _parse_strings_xml(xml_path: Path) -> dict[str, str]:
     try:
         if not xml_path.exists():
             return {}
-        tree = ET.parse(xml_path)
+        tree = LET.parse(str(xml_path))
         root = tree.getroot()
         result = {}
         for string_elem in root.findall("string"):

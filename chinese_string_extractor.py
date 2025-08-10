@@ -284,6 +284,14 @@ def save_changes():
     global current_strings, extractor
     
     data = request.json
+    project_root = data.get('project_root', '')
+    if not project_root:
+        return jsonify({'error': '请提供项目路径'}), 400
+    
+    project_root = Path(project_root)
+    if not project_root.exists():
+        return jsonify({'error': f'项目路径 {project_root} 不存在'}), 400
+    
     updated_strings = data.get('strings', [])
     ignored_strings = data.get('ignored_strings', [])
     target_xml_path_template = data.get('target_xml_path_template')
@@ -307,7 +315,7 @@ def save_changes():
         
         # 按模块分组字符串
         modules = {}
-        replacer = StringReplacer(extractor.project_root, replacement_script=replacement_script)
+        replacer = StringReplacer(project_root, replacement_script=replacement_script)
         
         for s in current_strings:
             if not s.resource_name or not s.translation:
@@ -323,7 +331,7 @@ def save_changes():
         
         # 生成XML文件和执行替换
         for module_name, strings in modules.items():
-            module_path = extractor.project_root / module_name
+            module_path = project_root / module_name
 
             # 根据模板生成中文/目标语言 XML
             replacer.generate_strings_xml_with_template(
@@ -340,7 +348,7 @@ def save_changes():
                 file_to_strings.setdefault(s.file_path, []).append(s)
 
             for rel_path, strs in file_to_strings.items():
-                file_path = extractor.project_root / rel_path
+                file_path = project_root / rel_path
                 replacer.replace_strings_in_file_advanced(file_path, strs, module_name)
         
         return jsonify({'success': True, 'message': '保存成功'})

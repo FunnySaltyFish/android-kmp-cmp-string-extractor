@@ -1395,6 +1395,7 @@ def get_import_statements(module_name: str, file_name: str) -> str:
 
                     try {
                         const response = await axios.post('/api/save', {
+                            project_root: this.config.projectPath,
                             strings: this.strings,
                             ignored_strings: [],
                             target_xml_path_template: this.config.targetXmlPath,
