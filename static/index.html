@@ -1310,19 +1310,54 @@ def get_import_statements(module_name: str, file_name: str) -> str:
                                         }
                                     });
 
-                                    // 翻译回写时，前端再次过滤已忽略的字符串，且为未记录过选择状态的条目默认设为未选中
-                                    const filteredUpdatedStrings = updatedStrings
-                                        .filter(s => !this.ignoredStrings.has(s.text))
-                                        .map(s => {
-                                            if (this.lastSelectedStates.has(s.unique_id)) {
-                                                s.selected = this.lastSelectedStates.get(s.unique_id);
-                                            } else if (s.selected === undefined) {
-                                                s.selected = false;
+                                    // 合并策略：按 unique_id 将本批更新合并到现有列表，保留原有顺序；
+                                    // 同时过滤忽略项，并为新出现且未记录选择状态的条目默认设为未选中
+                                    const updatedById = new Map();
+                                    updatedStrings.forEach(s => {
+                                        if (!this.ignoredStrings.has(s.text)) {
+                                            updatedById.set(s.unique_id, s);
+                                        }
+                                    });
+
+                                    const mergedList = [];
+                                    const seenIds = new Set();
+
+                                    // 先按原有顺序遍历现有列表，若该条目在更新集中，则合并；否则保留
+                                    this.strings.forEach(oldItem => {
+                                        if (this.ignoredStrings.has(oldItem.text)) return; // 再次确保忽略
+                                        const id = oldItem.unique_id;
+                                        let mergedItem = oldItem;
+                                        if (updatedById.has(id)) {
+                                            const upd = updatedById.get(id);
+                                            let selectedValue = oldItem.selected;
+                                            if (this.lastSelectedStates.has(id)) {
+                                                selectedValue = this.lastSelectedStates.get(id);
+                                            } else if (upd.selected !== undefined) {
+                                                selectedValue = upd.selected;
                                             }
-                                            return s;
-                                        });
-                                    
-                                    this.strings = filteredUpdatedStrings;
+                                            mergedItem = { ...oldItem, ...upd, selected: selectedValue };
+                                            updatedById.delete(id);
+                                        }
+                                        mergedList.push(mergedItem);
+                                        seenIds.add(id);
+                                    });
+
+                                    // 追加本批中原列表不存在的新条目（按返回顺序）
+                                    updatedStrings.forEach(s => {
+                                        if (!this.ignoredStrings.has(s.text) && !seenIds.has(s.unique_id)) {
+                                            let selectedValue = false;
+                                            if (this.lastSelectedStates.has(s.unique_id)) {
+                                                selectedValue = this.lastSelectedStates.get(s.unique_id);
+                                            } else if (s.selected !== undefined) {
+                                                selectedValue = s.selected;
+                                            }
+                                            mergedList.push({ ...s, selected: selectedValue });
+                                            seenIds.add(s.unique_id);
+                                        }
+                                    });
+
+                                    this.strings = mergedList;
+                                    this.updateCounts();
                                     this.batchTranslation.completedCount += response.data.updated_count;
                                     
                                     // 检查是否有部分错误

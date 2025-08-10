@@ -132,10 +132,13 @@ def translate_strings():
         
         print(f"翻译完成，更新了 {min(len(selected_ids), len(results))} 个字符串")
         
+        # 仅返回本次选择的条目（增量返回），避免前端被全量列表覆盖
+        incremental_strings = [asdict(selected_strings_dict[uid]) for uid in selected_ids if uid in selected_strings_dict]
         return jsonify({
             'success': True,
             'results': results,
-            'strings': [asdict(s) for s in current_strings]
+            'updated_count': min(len(selected_ids), len(results)),
+            'strings': incremental_strings
         })
         
     except Exception as e:
@@ -226,13 +229,15 @@ def translate_batch_api():
         if translation_errors:
             print(f"翻译过程中出现的错误: {translation_errors}")
         
+        # 仅返回本批更新涉及的条目（增量返回）
+        incremental_strings = [asdict(selected_strings_dict[uid]) for uid in selected_ids if uid in selected_strings_dict]
         response_data = {
             'success': True,
             'batch_index': batch_index,
             'current_batch_size': len(selected_ids),
             'updated_count': updated_count,
             'errors': translation_errors if translation_errors else None,
-            'strings': [asdict(s) for s in current_strings]
+            'strings': incremental_strings
         }
         
         return jsonify(response_data)
