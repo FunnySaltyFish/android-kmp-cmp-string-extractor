@@ -24,14 +24,10 @@ batch_translation_state = {
     'total_batches': 0,
     'failed_batches': []
 }
- 
-extracted_dir = "static/extracted"
-extracted_file = extracted_dir + "/test.json"
 
 # 赞助信息
 SPONSOR_URL = "https://web.funnysaltyfish.fun/?source=string_extractor_api"
 _sponsor_tip_printed = False
-
 
 def print_sponsor_tip_once(reason: Optional[str] = None) -> None:
     """在退出/中断时打印赞助提示，只打印一次。"""
@@ -88,17 +84,6 @@ def _register_exit_hooks() -> None:
 def index():
     """主页"""
     return app.send_static_file('index.html')
-
-@app.route('/api/load_extracted', methods=['POST'])
-def load_extracted():
-    """加载已提取的字符串API"""
-    global current_strings
-    path = Path(extracted_dir)
-    if not path.exists():
-        return jsonify({'success': False, 'message': '提取文件不存在'})
-    with open(path, 'r', encoding='utf-8') as f:
-        current_strings = [ChineseString(**s) for s in json.load(f)]
-    return jsonify({'success': True, 'strings': current_strings})
 
 @app.route("/api/update_current_strings", methods=['POST'])
 def update_current_strings():
