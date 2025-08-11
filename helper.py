@@ -45,8 +45,11 @@ class ChineseStringExtractor:
     
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
+        print(f"[初始化] 项目根目录: {project_root}")
         self.ignored_strings: Set[str] = self.load_ignored_strings()
+        print(f"[初始化] 已加载 {len(self.ignored_strings)} 个忽略字符串")
         self.existing_resources: Dict[str, str] = self.load_existing_resources()
+        print(f"[初始化] 已加载 {len(self.existing_resources)} 个现有资源")
         
         # 中文字符串正则模式
         self.chinese_patterns = [
@@ -193,11 +196,15 @@ class ChineseStringExtractor:
             extraction_globs: 自定义扫描模式列表（glob），如 ["**/*.kt", "**/*.kts"]。
                 若不提供，则默认扫描所有 Kotlin 源文件（**/*.kt）。
         """
+        print("[开始] 扫描项目中的中文字符串...")
         all_strings = []
         
         # 默认扫描 *.kt 文件
         globs = extraction_globs if extraction_globs else ["**/*.kt"]
+        print(f"[扫描] 使用模式: {globs}")
+        
         visited: Set[Path] = set()
+        file_count = 0
         for pattern in globs:
             for kt_file in self.project_root.rglob(pattern):
                 if kt_file in visited:
@@ -206,8 +213,13 @@ class ChineseStringExtractor:
                 # 排除常见构建目录
                 if any(part in {"build", ".gradle", "node_modules"} for part in kt_file.parts):
                     continue
+                file_count += 1
                 strings = self.extract_strings_from_file(kt_file)
+                if strings:
+                    print(f"[提取] {kt_file.relative_to(self.project_root)}: 找到 {len(strings)} 个中文字符串")
                 all_strings.extend(strings)
+        
+        print(f"[扫描完成] 共扫描 {file_count} 个文件，找到 {len(all_strings)} 个中文字符串")
         
         # 去重（基于unique_id，即模块名和文本内容）
         unique_strings = {}
@@ -215,6 +227,9 @@ class ChineseStringExtractor:
             unique_id = s.unique_id
             if unique_id not in unique_strings:
                 unique_strings[unique_id] = s
+        
+        if len(unique_strings) != len(all_strings):
+            print(f"[去重] 去除 {len(all_strings) - len(unique_strings)} 个重复项，剩余 {len(unique_strings)} 个唯一字符串")
         
         return list(unique_strings.values())
 
@@ -252,10 +267,12 @@ class ChineseStringExtractor:
         Returns:
             List[Dict[str, str]]: 翻译对照列表，每个元素包含 source, target 字段
         """
+        print(f"[开始] 提取参考翻译对照，目标语言: {target_language}，限制数量: {limit}")
         references = []
         
         try:
             # 扫描所有模块
+            scanned_modules = 0
             for module_dir in self.project_root.iterdir():
                 
 
@@ -266,7 +283,8 @@ class ChineseStringExtractor:
                 if any(part in {"build", ".gradle", "node_modules"} for part in module_dir.parts):
                     continue
 
-                print("当前扫描目录：", module_dir)
+                scanned_modules += 1
+                print(f"[扫描模块] {module_dir.name} ({scanned_modules})")
                 
                 # 构建实际的XML文件路径
                 source_path = self.project_root / source_xml_path.format(module_name=module_dir.name)
@@ -284,6 +302,7 @@ class ChineseStringExtractor:
                 target_strings = _parse_strings_xml(target_path)
                 
                 # 提取对照翻译
+                found_in_module = 0
                 for name, source_text in source_strings.items():
                     if name in target_strings and self.contains_chinese(source_text):
                         target_text = target_strings[name]
@@ -295,10 +314,14 @@ class ChineseStringExtractor:
                                 'resource_name': name,
                                 'module': module_dir.name
                             })
+                            found_in_module += 1
                             
                             # 达到限制数量时停止
                             if len(references) >= limit:
                                 break
+                
+                if found_in_module > 0:
+                    print(f"[找到] 模块 {module_dir.name}: {found_in_module} 对翻译")
                 
                 # 达到限制数量时停止扫描其他模块
                 if len(references) >= limit:
@@ -306,8 +329,9 @@ class ChineseStringExtractor:
                     
         except Exception as e:
             print_exc()
-            print(f"提取参考翻译时出错: {e}")
+            print(f"[错误] 提取参考翻译时出错: {e}")
         
+        print(f"[完成] 共提取到 {len(references)} 对参考翻译")
         return references
 
 
@@ -330,6 +354,8 @@ class TranslationService:
         if not strings:
             return []
             
+        print(f"[翻译] 开始翻译 {len(strings)} 个字符串到 {self.target_language}")
+        
         # 构建翻译请求
         texts_to_translate = [s.text for s in strings]
     
@@ -339,7 +365,8 @@ class TranslationService:
             source_strings=json.dumps(texts_to_translate, ensure_ascii=False),
         )
         try:
-            print("prompt: ", prompt)
+            print(f"[API调用] 使用模型: {self.model_name}, prompt: ")
+            print(prompt)
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
@@ -352,20 +379,26 @@ class TranslationService:
             )
             
             result_text = response.choices[0].message.content
-            print("resp:", result_text)
+            print(f"[翻译响应] 收到API响应，长度: {len(result_text)} 字符，完整内容：")
+            print(result_text)
             # 尝试解析JSON
             try:
-                return json.loads(result_text)
+                result = json.loads(result_text)
+                print(f"[翻译成功] 成功解析 {len(result) if isinstance(result, list) else '?'} 个翻译结果")
+                return result
             except json.JSONDecodeError:
+                print("[解析] JSON解析失败，尝试提取JSON部分")
                 # 如果JSON解析失败，尝试提取JSON部分
                 json_match = re.search(r'\[.*\]', result_text, re.DOTALL)
                 if json_match:
-                    return json.loads(json_match.group())
+                    result = json.loads(json_match.group())
+                    print(f"[翻译成功] 提取并解析 {len(result) if isinstance(result, list) else '?'} 个翻译结果")
+                    return result
                 else:
                     raise ValueError("无法解析翻译结果")
                     
         except Exception as e:
-            print(f"翻译失败: {e}")
+            print(f"[翻译失败] {e}")
             print_exc()
             return []
 
@@ -390,15 +423,17 @@ class StringReplacer:
         - xml_path_template 示例："{module_name}/src/commonMain/libres/strings/strings_{lang}.xml"
         - 支持占位符：{module_name}、{lang}、{target_language}（与 {lang} 等价）
         """
+        print(f"[XML生成] 开始为模块 {module_name} 生成 {lang} 语言的XML文件")
         try:
             if not xml_path_template:
                 # 回退到默认路径逻辑
-                print("请输入合法的 xml_path_template")
+                print("[错误] 请输入合法的 xml_path_template")
                 return False
 
             # 解析模板
             relative = xml_path_template.format(module_name=module_name, lang=lang, target_language=lang)
             xml_file = (self.project_root / relative).resolve()
+            print(f"[XML路径] {xml_file}")
             xml_file.parent.mkdir(parents=True, exist_ok=True)
 
             # 加载现有 XML，尽量保留原有注释与结构
@@ -432,6 +467,8 @@ class StringReplacer:
                 if s.resource_name and s.resource_name not in existing_names:
                     to_append.append(s)
 
+            print(f"[XML检查] 现有条目: {len(existing_names)}，待添加: {len(to_append)}")
+            
             if to_append:
                 # 情况1：已有子元素，修正最后一个现有元素的 tail，保证第一个追加元素有缩进
                 last_existing_element = None
@@ -473,9 +510,10 @@ class StringReplacer:
                 xml_declaration=True,
                 pretty_print=True,
             )
+            print(f"[XML完成] 成功生成XML文件，新增 {len(to_append)} 个条目")
             return True
         except Exception as e:
-            print(f"生成模板 XML 文件失败: {e}")
+            print(f"[XML失败] 生成模板 XML 文件失败: {e}")
             return False
 
     def replace_strings_in_file_advanced(
@@ -489,12 +527,14 @@ class StringReplacer:
         - strings: 列表中的每项需包含 text（原文）、resource_name（目标资源名）、format_params（参数名列表）。
         - module_name: 当前模块名，用于 import 生成。
         """
+        print(f"[替换] 开始处理文件: {file_path.relative_to(self.project_root)}")
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
             original_content = content
             any_replaced = False
+            replaced_count = 0
 
             # 逐条构造替换
             for s in strings:
@@ -551,6 +591,8 @@ class StringReplacer:
                     if num > 0:
                         content = new_content
                         any_replaced = True
+                        replaced_count += num
+                        print(f"[替换成功] '{s.text}' -> {s.resource_name} ({num}处)")
 
             # 如果有替换，尝试插入 import（仅一次）
             if any_replaced:
@@ -565,10 +607,13 @@ class StringReplacer:
             if content != original_content:
                 with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(content)
+                print(f"[替换完成] 文件已更新，共替换 {replaced_count} 处字符串")
                 return True
-            return False
+            else:
+                print("[替换跳过] 文件无需更改")
+                return False
         except Exception as e:
-            print(f"高级替换失败 {file_path}: {e}")
+            print(f"[替换失败] {file_path}: {e}")
             return False
 
     # -------------------- 内部工具 --------------------
@@ -627,7 +672,7 @@ class StringReplacer:
         }
         local_vars: Dict[str, object] = {}
         try:
-            print("传入的用户脚本：")
+            print("[脚本] 开始解析用户自定义替换脚本，传入的源代码：")
             print(script)
             exec(  # nosec - 用户受信输入，建议仅在本地开发环境使用
                 script,
@@ -644,9 +689,10 @@ class StringReplacer:
                 get_imports = _default_get_import_statements
             if not callable(format_xml):
                 format_xml = _default_format_xml_text
+            print("[脚本] 用户脚本解析成功")
             return get_replaced, get_imports, format_xml
         except Exception as e:
-            print(f"解析替换脚本失败，使用默认实现: {e}")
+            print(f"[脚本] 解析替换脚本失败，使用默认实现: {e}")
             return _default_get_replaced_text, _default_get_import_statements, _default_format_xml_text
 
     def _insert_import_once(self, content: str, import_line: str) -> str:
@@ -715,6 +761,8 @@ def _parse_strings_xml(xml_path: Path) -> dict[str, str]:
             text = string_elem.text or ""
             if name:
                 result[name] = text
+        print(f"[解析XML] {xml_path.name}: 找到 {len(result)} 个字符串条目")
         return result
-    except Exception:
+    except Exception as e:
+        print(f"[解析XML] 解析失败 {xml_path}: {e}")
         return {}

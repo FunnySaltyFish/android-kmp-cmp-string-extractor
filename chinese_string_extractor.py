@@ -459,13 +459,14 @@ def save_changes():
 if __name__ == '__main__':
     # 仅在实际运行的进程中注册（避免 Flask debug 重载导致多次注册）
     is_reloader_child = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+    debug = False # 是否开启热重载
     if not os.environ.get('FLASK_RUN_FROM_CLI') or is_reloader_child:
         _register_exit_hooks()
 
     print("启动中文字符串提取工具...")
     print("请在浏览器中访问: http://localhost:5000")
     try:
-        app.run(debug=True, port=5000)
+        app.run(debug=debug, port=5000)
     except KeyboardInterrupt:
         # 兜底：Ctrl+C 时打印一次提示
         print_sponsor_tip_once("检测到 Ctrl+C，正在退出")
