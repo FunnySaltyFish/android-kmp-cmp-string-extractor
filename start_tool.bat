@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 echo ========================================
-echo  Transtation 中文字符串提取工具
+echo  CMP/Android 中文字符串提取工具
 echo ========================================
 echo.
 

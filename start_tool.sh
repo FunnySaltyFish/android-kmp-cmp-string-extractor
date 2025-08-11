@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# Transtation 中文字符串提取工具启动脚本 (Linux/macOS)
-
 echo "========================================"
-echo " Transtation 中文字符串提取工具"
+echo " CMP/Android 中文字符串提取工具"
 echo "========================================"
 echo
 
