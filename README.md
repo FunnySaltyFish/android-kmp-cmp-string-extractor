@@ -160,7 +160,7 @@ A: 查看控制台错误信息，确保依赖库已正确安装
 ## 📂 项目结构
 
 ```
-resource-extractor/
+android-kmp-cmp-string-extractor/
 ├── chinese_string_extractor.py    # 主程序
 ├── helper.py                      # 核心逻辑
 ├── static/
@@ -178,9 +178,9 @@ resource-extractor/
 **开发环境：**
 ```bash
 git clone <repository>
-cd resource-extractor
-pip install -r requirements.txt
-python chinese_string_extractor.py
+cd android-kmp-cmp-string-extractor
+pip install -r requirements.txt 
+python chinese_string_extractor.py # 需要 Python 3.9.0 以上
 ```
 
 ## 📄 开源协议
