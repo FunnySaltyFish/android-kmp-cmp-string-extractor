@@ -375,10 +375,23 @@ class TranslationService:
                 ],
                 temperature=0.3,
                 # （total, connect, sock_read, sock_connect）
-                timeout=Timeout(120.0, read=120.0, write=20.0, connect=20.0)
+                timeout=Timeout(120.0, read=120.0, write=20.0, connect=20.0),
+                stream=True
             )
-            
-            result_text = response.choices[0].message.content
+
+            result_text = ""
+            i = 0 # 每十次打印一下
+            temp_text = ""
+            for chunk in response:
+                if i % 10 == 0:
+                    print("[翻译响应] 接受API响应中：" + temp_text.replace('\n', '\\n'))
+                    result_text += temp_text
+                    temp_text = ""
+
+                temp_text += chunk.choices[0].delta.content
+                i += 1
+
+            result_text += temp_text
             print(f"[翻译响应] 收到API响应，长度: {len(result_text)} 字符，完整内容：")
             print(result_text)
             # 尝试解析JSON
@@ -644,7 +657,9 @@ class StringReplacer:
             return f"ResStrings.{res_name}.format({joined})"
 
         def _default_get_import_statements(module_name: str, file_path: str) -> str:
-            return f"import com.funny.translation.{module_name}.strings.ResString"
+            if module_name == "composeApp":
+                return "import com.funny.translation.strings.ResStrings"
+            return f"import com.funny.translation.{module_name.replace('-', '')}.strings.ResStrings"
 
         def _default_format_xml_text(text: str, args: List[Dict[str, str]]) -> str:
             """默认用于 LibRes：将占位统一为 ${name} 形式。
